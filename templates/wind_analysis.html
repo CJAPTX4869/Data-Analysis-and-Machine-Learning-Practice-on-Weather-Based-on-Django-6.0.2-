@@ -1,0 +1,118 @@
+{% extends 'base.html' %}
+{% block title %}风力分析 - 天气预测系统{% endblock %}
+{% block content %}
+<div class="container-fluid px-4 py-4">
+    <h3 class="mb-4"><i class="bi bi-wind"></i> 风力风向分析</h3>
+
+    <div class="row g-2 align-items-end mb-4">
+        <div class="col-auto">
+            <label class="form-label small mb-1">年份</label>
+            <div>
+                <a href="?year=2025{% if sel_city %}&city_id={{ sel_city }}{% endif %}" class="btn btn-outline-primary btn-sm {% if year == 2025 %}active{% endif %}">2025</a>
+                <a href="?year=2026{% if sel_city %}&city_id={{ sel_city }}{% endif %}" class="btn btn-outline-primary btn-sm {% if year == 2026 %}active{% endif %}">2026</a>
+            </div>
+        </div>
+        <div class="col-auto">
+            <label class="form-label small mb-1">月份</label>
+            <select class="form-select form-select-sm" id="monthPick" onchange="loadData()" style="width:100px">
+                <option value="0">全年</option>
+                <option value="1">1月</option><option value="2">2月</option><option value="3">3月</option>
+                <option value="4">4月</option><option value="5">5月</option><option value="6">6月</option>
+                <option value="7">7月</option><option value="8">8月</option><option value="9">9月</option>
+                <option value="10">10月</option><option value="11">11月</option><option value="12">12月</option>
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label small mb-1">城市</label>
+            <select class="form-select form-select-sm" onchange="location.href='?year={{ year }}&city_id='+this.value" style="width:200px">
+                <option value="">全部城市</option>
+                {% for prov, options in city_tree.items %}
+                <optgroup label="{{ prov }}">
+                {% for opt_id, opt_label, opt_level in options %}
+                    <option value="{{ opt_id }}" {% if sel_city == opt_id %}selected{% endif %}>{{ opt_label }}</option>
+                {% endfor %}
+                </optgroup>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-auto"><span class="text-muted small" id="infoTip"></span></div>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-6">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-compass"></i> 风向分布雷达图 <small class="text-muted" id="radarTitle"></small></div>
+                <div class="chart-box" id="windRadar"></div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-bar-chart"></i> 风向频率统计</div>
+                <div class="chart-box" id="windBarChart"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var year = {{ year }};
+var selCity = '{{ sel_city|default:'' }}';
+
+function loadData() {
+    var month = document.getElementById('monthPick').value;
+    var start, end;
+    if(month > 0) {
+        start = year + '-' + String(month).padStart(2,'0') + '-01';
+        var lastDay = new Date(year, month, 0).getDate();
+        end = year + '-' + String(month).padStart(2,'0') + '-' + lastDay;
+    } else {
+        start = year + '-01-01';
+        end = year + '-12-31';
+    }
+
+    var url = selCity ? '/api/city/'+selCity+'/?start='+start+'&end='+end : '/api/city/7/?start='+start+'&end='+end;
+
+    fetch(url).then(function(r){return r.json();}).then(function(d){
+        var allData = d.data;
+        document.getElementById('infoTip').textContent = d.city + ' · ' + allData.length + '天';
+        var label = (month>0 ? month+'月' : year+'年');
+        document.getElementById('radarTitle').textContent = label;
+
+        var dirCount = {};
+        allData.forEach(function(day){
+            var w = day.wind_direction || '未知';
+            dirCount[w] = (dirCount[w]||0)+1;
+        });
+
+        var dirOrder = ['北风','东北风','东风','东南风','南风','西南风','西风','西北风','无持续风向'];
+        var names = [], vals = [];
+        dirOrder.forEach(function(k){ if(dirCount[k]){ names.push(k); vals.push(dirCount[k]); } });
+        Object.keys(dirCount).forEach(function(k){ if(dirOrder.indexOf(k)<0){ names.push(k); vals.push(dirCount[k]); } });
+
+        var maxV = Math.max.apply(null, vals.concat([1]));
+        var radar = echarts.getInstanceByDom(document.getElementById('windRadar')) || echarts.init(document.getElementById('windRadar'));
+        radar.setOption({
+            tooltip:{},
+            radar:{indicator:names.map(function(n){return {name:n,max:maxV+10};}),shape:'polygon',splitNumber:4,axisName:{color:'#666',fontSize:12}},
+            series:[{type:'radar',data:[{value:vals,name:'风向频率',areaStyle:{opacity:0.3}}],itemStyle:{color:'#5470c6'}}]
+        },true);
+
+        var bar = echarts.getInstanceByDom(document.getElementById('windBarChart')) || echarts.init(document.getElementById('windBarChart'));
+        bar.setOption({
+            tooltip:{trigger:'axis'},
+            xAxis:{type:'category',data:names,axisLabel:{rotate:30}},
+            yAxis:{type:'value',name:'出现次数'},
+            series:[{type:'bar',data:vals,itemStyle:{color:function(p){
+                var colors=['#5470c6','#91cc75','#fac858','#ee6666','#73c0de','#3ba272','#fc8452','#9a60b4'];
+                return colors[p.dataIndex%colors.length];
+            },borderRadius:[6,6,0,0]}}],
+            grid:{left:60,right:15,top:10,bottom:60,containLabel:true}
+        },true);
+    });
+}
+
+loadData();
+</script>
+{% endblock %}

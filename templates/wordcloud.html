@@ -1,0 +1,94 @@
+{% extends 'base.html' %}
+{% block title %}数据词云图 - 天气预测系统{% endblock %}
+{% block content %}
+<div class="container-fluid px-4 py-4">
+    <h3 class="mb-4"><i class="bi bi-cloud-fill"></i> 天气数据词云图</h3>
+
+    <div class="row g-4">
+        <div class="col-lg-8">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-wordpress"></i> 天气状况词云</div>
+                {% if wordcloud_img %}
+                    <div class="text-center">
+                        <img src="{{ wordcloud_img }}" alt="天气词云图" class="img-fluid rounded">
+                    </div>
+                {% else %}
+                    <div class="chart-box" id="wordCloudChart"></div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-info-circle"></i> 说明</div>
+                <p>词云图展示了天气数据中出现频率最高的关键词，字体越大表示出现次数越多。</p>
+                <ul>
+                    <li><strong>晴</strong> - 晴天出现频率</li>
+                    <li><strong>多云</strong> - 多云天气频率</li>
+                    <li><strong>雨</strong> - 各类降雨频率</li>
+                    <li><strong>阴</strong> - 阴天频率</li>
+                </ul>
+                <hr>
+                <h6>风向标签云</h6>
+                <div id="windTagCloud" class="chart-box"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // 如果有后端生成的词云图则不用ECharts渲染，否则用ECharts模拟词云
+    {% if not wordcloud_img %}
+    (function() {
+        fetch('/api/wordcloud/')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                var chart = echarts.init(document.getElementById('wordCloudChart'));
+                chart.setOption({
+                    tooltip: {},
+                    series: [{
+                        type: 'wordCloud',
+                        sizeRange: [16, 80],
+                        rotationRange: [-45, 45],
+                        shape: 'cloud',
+                        width: '100%',
+                        height: '100%',
+                        data: d.data.map(function(item) {
+                            return { name: item.name, value: item.value };
+                        }),
+                        textStyle: {
+                            color: function() {
+                                var colors = ['#5470c6','#91cc75','#fac858','#ee6666','#73c0de','#3ba272','#fc8452','#9a60b4'];
+                                return colors[Math.floor(Math.random() * colors.length)];
+                            }
+                        }
+                    }]
+                });
+                window.addEventListener('resize', function() { chart.resize(); });
+            });
+    })();
+    {% endif %}
+
+    // 风向标签云（基于ECharts wordcloud或降级为柱状图）
+    (function() {
+        var chart = echarts.init(document.getElementById('windTagCloud'));
+        fetch('/api/wordcloud/')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                var total = d.data.reduce(function(s, i) { return s + i.value; }, 0);
+                chart.setOption({
+                    tooltip: { trigger: 'axis' },
+                    xAxis: { type: 'category', data: d.data.slice(0, 10).map(function(i) { return i.name; }), axisLabel: { rotate: 30 } },
+                    yAxis: { type: 'value' },
+                    series: [{
+                        type: 'bar',
+                        data: d.data.slice(0, 10).map(function(i) { return { value: i.value, itemStyle: { borderRadius: [6,6,0,0] } }; })
+                    }],
+                    grid: { left: '5%', right: '5%', bottom: '15%', containLabel: true }
+                });
+                window.addEventListener('resize', function() { chart.resize(); });
+            });
+    })();
+</script>
+{% endblock %}

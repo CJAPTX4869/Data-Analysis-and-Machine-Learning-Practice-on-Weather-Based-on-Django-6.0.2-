@@ -1,0 +1,116 @@
+{% extends 'base.html' %}
+{% block title %}数据管理 - 天气预测系统{% endblock %}
+{% block content %}
+<div class="container-fluid px-4 py-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4><i class="bi bi-database-gear"></i> 数据管理中心 <small class="text-muted fs-6">{{ total }}条</small></h4>
+        <div>
+            <a href="{% url 'data_add' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> 新增</a>
+            <a href="{% url 'city_list' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-building"></i> 城市管理</a>
+        </div>
+    </div>
+
+    <!-- 分类搜索 -->
+    <form method="get" class="row g-2 mb-2 align-items-end">
+        <div class="col-md-2">
+            <label class="form-label small mb-0">🗺️ 省份</label>
+            {{ search.province }}
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-0">🏙️ 城市</label>
+            {{ search.city }}
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-0">☁️ 天气</label>
+            {{ search.weather }}
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-0">📅 开始</label>
+            {{ search.date_from }}
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small mb-0">📅 结束</label>
+            {{ search.date_to }}
+        </div>
+        <div class="col-md-1">
+            <button class="btn btn-sm btn-outline-primary w-100">搜索</button>
+        </div>
+        <div class="col-md-1">
+            <a href="{% url 'data_center' %}" class="btn btn-sm btn-outline-secondary w-100">清除</a>
+        </div>
+    </form>
+    <!-- 省份快捷筛选 -->
+    <div class="mb-3" style="max-height:80px;overflow-y:auto">
+        {% for p in provinces %}
+        <a href="?province={{ p.province }}" class="badge bg-light text-dark text-decoration-none me-1 mb-1">{{ p.province }}</a>
+        {% endfor %}
+    </div>
+
+    <!-- 批量操作 -->
+    <form method="post" action="{% url 'data_batch_delete' %}" id="batchForm">
+    {% csrf_token %}
+    <div class="table-card">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <small><input type="checkbox" onclick="document.querySelectorAll('.row-check').forEach(c=>c.checked=this.checked)"> 全选</small>
+            <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('确定删除选中记录？')"><i class="bi bi-trash"></i> 批量删除</button>
+        </div>
+        <div style="max-height:60vh;overflow-y:auto">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light sticky-top"><tr>
+                <th>选</th><th>城市</th><th>日期</th><th>高温</th><th>低温</th><th>天气</th><th>风向</th><th>降水</th><th>湿度</th><th>AQI</th><th>操作</th>
+            </tr></thead>
+            <tbody>
+                {% for d in records %}
+                <tr>
+                    <td><input type="checkbox" name="ids" value="{{ d.id }}" class="row-check"></td>
+                    <td><strong>{{ d.city.name }}</strong></td>
+                    <td><small>{{ d.date }}</small></td>
+                    <td><span class="text-danger">{{ d.temperature_high }}℃</span></td>
+                    <td><span class="text-primary">{{ d.temperature_low }}℃</span></td>
+                    <td>{{ d.weather_condition }}</td>
+                    <td><small>{{ d.wind_direction }}</small></td>
+                    <td><small>{% if d.precipitation is not None %}{{ d.precipitation }}mm{% else %}-{% endif %}</small></td>
+                    <td><small>{% if d.humidity is not None %}{{ d.humidity }}%{% else %}-{% endif %}</small></td>
+                    <td>
+                        {% if d.aqi is not None %}
+                        <span class="badge {% if d.aqi <= 50 %}bg-success{% elif d.aqi <= 100 %}bg-info{% else %}bg-warning{% endif %}">{{ d.aqi }}</span>
+                        {% else %}
+                        <span class="text-muted">N/A</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{% url 'data_edit' d.id %}" class="btn btn-outline-primary btn-sm"><i class="bi bi-pencil"></i></a>
+                        <a href="{% url 'data_delete' d.id %}" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="9" class="text-center text-muted py-4">暂无数据</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        <!-- 分页 -->
+        {% if records.paginator.num_pages > 1 %}
+        <div class="mt-2 d-flex justify-content-between align-items-center">
+            <small class="text-muted">第{{ records.number }}/{{ records.paginator.num_pages }}页 · 共{{ records.paginator.count }}条</small>
+            <nav><ul class="pagination pagination-sm mb-0">
+                {% if records.has_previous %}
+                    <li class="page-item"><a class="page-link" href="?page={{ records.previous_page_number }}&{{ query_string }}">上一页</a></li>
+                {% endif %}
+                {% for p in records.paginator.page_range %}
+                    {% if p >= records.number|add:-2 and p <= records.number|add:2 %}
+                    <li class="page-item {% if p == records.number %}active{% endif %}">
+                        <a class="page-link" href="?page={{ p }}&{{ query_string }}">{{ p }}</a>
+                    </li>
+                    {% endif %}
+                {% endfor %}
+                {% if records.has_next %}
+                    <li class="page-item"><a class="page-link" href="?page={{ records.next_page_number }}&{{ query_string }}">下一页</a></li>
+                {% endif %}
+            </ul></nav>
+        </div>
+        {% endif %}
+    </div>
+    </form>
+</div>
+{% endblock %}

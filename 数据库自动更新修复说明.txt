@@ -1,0 +1,304 @@
+================================================================================
+          天气系统 - 数据库自动更新修复说明
+          日期: 2026-06-07
+================================================================================
+
+【问题描述】
+  1. 数据库不自动更新，需要每次手动运行命令
+  2. fetch_history_weather.py 用 bulk_create(ignore_conflicts=True)，
+     已存在的记录不会被更新（静默跳过）
+  3. fetch_today_weather.py 的 @transaction.atomic 包裹整个循环，
+     一个城市失败可能导致全部回滚
+  4. fetch_history_weather.py 的计数变量有 bug
+
+
+================================================================================
+  修改一: apps/crawler/apps.py  (新增自动拉取后台线程)
+================================================================================
+
+【文件路径】
+  weather_system\apps\crawler\apps.py
+
+【修改前】
+  from django.apps import AppConfig
+
+  class CrawlerConfig(AppConfig):
+      default_auto_field = 'django.db.models.BigAutoField'
+      name = 'apps.crawler'
+      verbose_name = '数据爬虫'
+
+【修改后】
+  import threading
+  import time
+  from datetime import date
+
+  from django.apps import AppConfig
+
+
+  def _auto_fetch_today_weather():
+      """
+      后台线程：Django 启动后自动拉取当日天气
+      - 延迟 5 秒等服务器完全就绪
+      - 检查当日数据是否已存在，避免重复拉取
+      """
+      time.sleep(5)  # 等 Django 完全初始化
+      try:
+          from apps.weather.models import City, WeatherData
+          today = date.today()
+
+          # 检查今日是否已有数据（抽查前 3 个城市）
+          sample_cities = City.objects.filter(level__in=['city', 'district', 'town'])[:3]
+          today_count = WeatherData.objects.filter(
+              city__in=sample_cities, date=today
+          ).count() if sample_cities else 0
+
+          if today_count >= len(sample_cities):
+              print(f'[自动更新] 今日天气数据已存在，跳过 ({today})')
+              return
+
+          print(f'[自动更新] 开始拉取今日天气数据... ({today})')
+
+          from apps.crawler.management.commands.fetch_today_weather import Command
+          cmd = Command()
+          cmd.handle()
+
+      except Exception as e:
+          print(f'[自动更新] 拉取失败: {e}')
+
+
+  class CrawlerConfig(AppConfig):
+      default_auto_field = 'django.db.models.BigAutoField'
+      name = 'apps.crawler'
+      verbose_name = '数据爬虫'
+
+      def ready(self):
+          # 自动更新只在主线程触发（避免 runserver 重载时重复执行）
+          import os
+          if os.environ.get('RUN_MAIN') != 'true':
+              return
+
+          t = threading.Thread(target=_auto_fetch_today_weather, daemon=True)
+          t.start()
+
+【修改说明】
+  1. 新增 _auto_fetch_today_weather() 函数，作为后台线程
+  2. 启动后等 5 秒，然后检查数据库中是否有今天的天气数据
+  3. 如果已有数据就跳过，没有则调用 fetch_today_weather 自动拉取
+  4. 通过 RUN_MAIN 环境变量防止 runserver 自动重载时重复执行
+  5. daemon=True 表示守护线程，主进程退出时自动结束
+
+
+================================================================================
+  修改二: apps/crawler/management/commands/fetch_today_weather.py  (移除事务锁)
+================================================================================
+
+【文件路径】
+  weather_system\apps\crawler\management\commands\fetch_today_weather.py
+
+【修改位置1 - 第11-13行，删除未使用的 import】
+  修改前:
+    from django.core.management.base import BaseCommand
+    from django.db import transaction
+
+    from apps.weather.models import City, WeatherData
+
+  修改后:
+    from django.core.management.base import BaseCommand
+
+    from apps.weather.models import City, WeatherData
+
+  (删除了 from django.db import transaction，因为不再使用)
+
+【修改位置2 - 第129行，移除 @transaction.atomic】
+  修改前:
+    @transaction.atomic
+    def handle(self, *args, **options):
+
+  修改后:
+    def handle(self, *args, **options):
+
+【修改说明】
+  原来的 @transaction.atomic 装饰器会把所有城市的更新放在一个事务里。
+  如果循环中任何一个城市出现未捕获的异常，整个事务回滚，已经写入的数据也会丢失。
+  去掉后，每个 update_or_create 自己就是原子操作，一个失败不影响别的城市。
+
+
+================================================================================
+  修改三: apps/crawler/management/commands/fetch_history_weather.py  (修复不更新+计数bug)
+================================================================================
+
+【文件路径】
+  weather_system\apps\crawler\management\commands\fetch_history_weather.py
+
+【修改位置1 - 第10行，删除未使用的 import】
+  修改前:
+    from apps.weather.models import City, WeatherData
+
+  (上层原来还有 from django.db import transaction，已删除)
+  修改后不变，只是删了上一行的 import transaction
+
+  实际修改:
+  修改前:
+    from django.db import transaction
+
+    from apps.weather.models import City, WeatherData
+
+  修改后:
+    from apps.weather.models import City, WeatherData
+
+【修改位置2 - 第50行，移除 @transaction.atomic，改为普通方法】
+  修改前:
+    @transaction.atomic
+    def handle(self, *args, **options):
+        start_date = options['start']
+        ...
+        total_created = 0
+        for i, city in enumerate(cities):
+            ...
+            try:
+                ...
+                batch = []
+                for j, d in enumerate(dates):
+                    ...
+                    batch.append(WeatherData(...))
+
+                # ORM bulk upsert
+                WeatherData.objects.bulk_create(batch, ignore_conflicts=True, batch_size=500)
+                self.stdout.write(f' ✓ {len(batch)}条')
+
+            except Exception as e:
+                self.stdout.write(f' ✗ {e}')
+
+            total_created += len(batch) if 'batch' in dir() else 0
+            time.sleep(0.3)
+
+        self.stdout.write(self.style.SUCCESS(f'\n历史天气获取完成! 新增~{total_created} 条'))
+
+  修改后:
+    def handle(self, *args, **options):
+        start_date = options['start']
+        end_date = options['end']
+        province = options['province']
+        batch_size = options['batch']
+
+        cities = list(City.objects.filter(province=province, level__in=['city', 'district', 'town']))
+        self.stdout.write(f'获取 {province} 省 {len(cities)} 个区域 {start_date}~{end_date} 历史天气...')
+
+        total_created = 0
+        total_updated = 0
+        for i, city in enumerate(cities):
+            self.stdout.write(f'[{i+1}/{len(cities)}] {city.name} ...', ending='')
+            city_created = 0
+            city_updated = 0
+            try:
+                url = (
+                    f'https://archive-api.open-meteo.com/v1/archive'
+                    f'?latitude={city.latitude}&longitude={city.longitude}'
+                    f'&start_date={start_date}&end_date={end_date}'
+                    f'&daily=temperature_2m_max,temperature_2m_min,weathercode,'
+                    f'windspeed_10m_max,winddirection_10m_dominant,precipitation_sum'
+                    f'&timezone=Asia/Shanghai'
+                )
+                resp = requests.get(url, timeout=30)
+                if resp.status_code != 200:
+                    self.stdout.write(f' ✗ HTTP {resp.status_code}')
+                    time.sleep(0.5)
+                    continue
+
+                data = resp.json()
+                daily = data.get('daily', {})
+                dates = daily.get('time', [])
+                if not dates:
+                    self.stdout.write(' ✗ 无数据')
+                    time.sleep(0.5)
+                    continue
+
+                highs = daily.get('temperature_2m_max', [])
+                lows = daily.get('temperature_2m_min', [])
+                codes = daily.get('weathercode', [])
+                winds = daily.get('windspeed_10m_max', [])
+                winddirs = daily.get('winddirection_10m_dominant', [])
+                precips = daily.get('precipitation_sum', [])
+
+                for j, d in enumerate(dates):
+                    wc = int(codes[j]) if j < len(codes) else 0
+                    wd = int(winddirs[j]) if j < len(winddirs) else 0
+                    ws = float(winds[j]) if j < len(winds) else 0
+                    pr = float(precips[j]) if j < len(precips) else 0
+                    _, created = WeatherData.objects.update_or_create(
+                        city=city, date=d,
+                        defaults={
+                            'temperature_high': int(highs[j]) if j < len(highs) else 25,
+                            'temperature_low': int(lows[j]) if j < len(lows) else 15,
+                            'weather_condition': WEATHER_CODE_MAP.get(wc, '多云'),
+                            'wind_direction': wind_degree_to_direction(wd),
+                            'wind_power': wind_speed_to_power(ws),
+                            'aqi': 60, 'aqi_level': '良',
+                            'humidity': 60, 'precipitation': round(pr, 1),
+                        }
+                    )
+                    if created:
+                        city_created += 1
+                    else:
+                        city_updated += 1
+
+                self.stdout.write(f' ✓ {city_created}条新增 {city_updated}条更新')
+
+            except Exception as e:
+                self.stdout.write(f' ✗ {e}')
+
+            total_created += city_created
+            total_updated += city_updated
+            time.sleep(0.3)
+
+        self.stdout.write(self.style.SUCCESS(
+            f'\n历史天气获取完成! 新增 {total_created} 条, 更新 {total_updated} 条'
+        ))
+
+【修改说明】
+  1. 去掉 @transaction.atomic，与 fetch_today_weather 同样的原因
+  2. bulk_create(ignore_conflicts=True) 改为 update_or_create：
+     - 原逻辑: 如果 city+date 已存在，静默跳过，不更新任何字段
+     - 新逻辑: 如果 city+date 已存在，用 API 返回的最新数据覆盖旧数据
+  3. 修复计数 bug:
+     - 原来: total_created += len(batch) if 'batch' in dir() else 0
+       如果上一个城市 API 在定义 batch=[] 前就抛异常，batch 变量不存在
+       如果上个城市的 batch 还在作用域，会把旧数据重复计数
+     - 现在: 用 city_created / city_updated 精确计数，异常时都是 0
+  4. 输出现在区分 "新增 X 条" 和 "更新 X 条"
+
+
+================================================================================
+  使用说明
+================================================================================
+
+【正常使用】每天只需正常启动 Django:
+  cd weather_system
+  python manage.py runserver
+
+启动约 5 秒后控制台会自动显示:
+  [自动更新] 开始拉取今日天气数据... (2026-06-07)
+
+如果今天已经拉取过，会显示:
+  [自动更新] 今日天气数据已存在，跳过 (2026-06-07)
+
+【手动拉取历史数据】(修复后再次拉取会更新已有记录):
+  python manage.py fetch_history_weather --start 2025-06-01 --end 2026-06-06 --province 湖北
+
+【手动拉取当日天气】:
+  python manage.py fetch_today_weather
+
+【初始化城市数据】(首次使用时):
+  python manage.py crawl_cities
+
+
+================================================================================
+  验证方法
+================================================================================
+
+1. 启动项目: python manage.py runserver
+2. 观察控制台是否有 [自动更新] 日志输出
+3. 浏览器打开 http://127.0.0.1:8000/
+4. 检查首页地图是否有城市温度数据
+5. 第二次启动时应该看到"跳过"提示
+6. 重新运行 fetch_history_weather，确认输出包含 "更新 X 条"

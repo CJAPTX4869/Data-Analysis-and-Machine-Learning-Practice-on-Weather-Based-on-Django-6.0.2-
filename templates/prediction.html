@@ -1,0 +1,263 @@
+{% extends 'base.html' %}
+{% block title %}天气预测 - 天气预测系统{% endblock %}
+{% block content %}
+<div class="container-fluid px-4 py-4">
+    <h3 class="mb-4"><i class="bi bi-cpu-fill"></i> 机器学习天气预测 <small class="text-muted fs-6">多模型对比</small>
+        {% if stored_predictions %}<span class="badge bg-success ms-2">✓ 已缓存</span>{% endif %}
+    </h3>
+
+    <form method="get" class="row g-2 align-items-end mb-4">
+        <div class="col-auto">
+            <label class="form-label small mb-1">省份</label>
+            <select name="prov" class="form-select form-select-sm" onchange="document.querySelector('[name=city_id]').value='';this.form.submit()" style="width:130px">
+                <option value="">全部省份</option>
+                {% for prov in all_provinces %}
+                <option value="{{ prov }}" {% if sel_prov == prov %}selected{% endif %}>{{ prov }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label small mb-1">城市</label>
+            <select name="city_id" class="form-select form-select-sm" onchange="this.form.submit()" style="width:220px">
+                <option value="">-- 选择城市 --</option>
+                {% for prov, options in city_tree.items %}
+                <optgroup label="{{ prov }}">
+                {% for opt_id, opt_label, opt_level in options %}
+                    <option value="{{ opt_id }}" {% if selected_city_id|stringformat:'s' == opt_id %}selected{% endif %}>{{ opt_label }}</option>
+                {% endfor %}
+                </optgroup>
+                {% endfor %}
+            </select>
+        </div>
+        {% if selected_city %}
+            <div class="col-auto">
+                <button type="button" class="btn btn-outline-success" onclick="location.reload()">
+                    <i class="bi bi-arrow-repeat"></i> 重新预测
+                </button>
+            </div>
+            <div class="col-auto">
+                <span class="badge bg-success fs-6">🏆 最佳模型: <span id="bestModelLabel">{{ best_model_name }}</span></span>
+            </div>
+        {% endif %}
+    </form>
+
+    {% if selected_city %}
+        <!-- 模型准确度小卡片 -->
+        <div class="row g-2 mb-4" id="accRow"></div>
+
+        <div class="row g-4">
+            <!-- 左侧：存储预测 + 降水概率 -->
+            <div class="col-lg-5">
+                {% if stored_predictions %}
+                <div class="chart-container mb-3" style="background:linear-gradient(135deg,#e8f5e9,#c8e6c9);border:2px solid #4caf50;">
+                    <div class="chart-title text-success">
+                        <i class="bi bi-database-check"></i> {{ selected_city.name }} 7天预测
+                        <span class="badge bg-success ms-1">已存储</span>
+                        <small class="text-muted ms-2">模型: {{ stored_model }} (R² {{ stored_accuracy }}%)</small>
+                    </div>
+                    <table class="table table-sm table-hover mb-0">
+                        <thead class="table-success"><tr><th>日期</th><th>最高</th><th>最低</th><th>温差</th><th>降水概率</th><th>降水量</th></tr></thead>
+                        <tbody id="storedTable"></tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="chart-container mb-3">
+                    <div class="chart-title"><i class="bi bi-calendar-check"></i> 集成预测</div>
+                    <table class="table table-hover table-sm mb-0" id="predTable"></table>
+                </div>
+                {% endif %}
+                {% if precip_forecast %}
+                <div class="chart-container" style="background:linear-gradient(135deg,#e8f5e9,#c8e6c9);border:2px solid #4caf50;">
+                    <div class="chart-title text-success"><i class="bi bi-cloud-drizzle"></i> 未来3天降水概率</div>
+                    <div id="precipForecast" style="padding:8px"></div>
+                </div>
+                {% endif %}
+            </div>
+            <!-- 右侧：ML多模型预测图 -->
+            <div class="col-lg-7">
+                <div class="chart-container">
+                    <div class="chart-title">
+                        <i class="bi bi-graph-up-arrow"></i> {{ selected_city.name }} 7天多模型预测
+                        <small class="text-muted">粗线=集成平均</small>
+                    </div>
+                    <div class="chart-box" id="predictionChart"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4 mt-2">
+            <div class="col-12">
+                <div class="chart-container">
+                    <div class="chart-title"><i class="bi bi-arrow-left-right"></i> 近期实际 + 预测趋势</div>
+                    <div class="chart-box" id="comparisonChart"></div>
+                </div>
+            </div>
+        </div>
+    {% else %}
+        <div class="text-center py-5">
+            <i class="bi bi-cloud-sun" style="font-size: 4rem; color: #ccc;"></i>
+            <h4 class="mt-3 text-muted">选择城市，开始多模型天气预测</h4>
+            <p class="text-muted small">线性回归 · 随机森林 · 梯度提升 · SVR · 集成平均</p>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{% if selected_city %}
+<script>
+    var allPred = {{ all_predictions|safe }};
+    var accs = {{ accuracies|safe }};
+    var recent = {{ recent_data|safe }};
+    var mColors = {{ model_colors|safe }};
+    var mNames = {{ model_names|safe }};
+
+    // 准确度小标签
+    (function(){
+        var row = document.getElementById('accRow');
+        accs.forEach(function(a){
+            var c = document.createElement('div');
+            c.className = 'col-auto';
+            c.innerHTML = '<div class="border rounded-pill px-3 py-1 d-inline-flex align-items-center gap-2" style="border-left:4px solid '+mColors[a.key]+'">'+
+                '<strong>'+a.name+'</strong> <span class="text-success fw-bold">R² '+a.avg+'%</span>'+
+                '<small class="text-muted">高'+a.high+'% 低'+a.low+'% 误差±'+(a.mae_high||'?')+'℃</small></div>';
+            row.appendChild(c);
+        });
+        document.getElementById('bestModelLabel').textContent = accs.length ? accs[0].name : '';
+    })();
+
+    // 预测曲线图
+    (function(){
+        var chart = echarts.init(document.getElementById('predictionChart'));
+        var dates = [], series = [];
+        Object.keys(allPred).forEach(function(k){
+            var p = allPred[k];
+            if(!dates.length) dates = p.map(function(d){return d.date;});
+            var label = mNames[k] || k;
+            var isEns = k === 'ensemble';
+            series.push({name:label+'高',type:'line',data:p.map(function(d){return d.high;}),smooth:true,
+                lineStyle:{width:isEns?3.5:1},itemStyle:{color:mColors[k]}});
+            series.push({name:label+'低',type:'line',data:p.map(function(d){return d.low;}),smooth:true,
+                lineStyle:{width:isEns?3.5:1,type:'dashed',opacity:0.6},itemStyle:{color:mColors[k]}});
+        });
+        chart.setOption({
+            tooltip:{trigger:'axis'}, legend:{bottom:0,type:'scroll',textStyle:{fontSize:10}},
+            xAxis:{type:'category',data:dates}, yAxis:{type:'value',name:'℃'},
+            series:series, grid:{left:'4%',right:'4%',bottom:'15%',top:'5%',containLabel:true}
+        });
+        window.addEventListener('resize',function(){chart.resize();});
+    })();
+
+    // 存储预测表（优先显示）
+    {% if stored_predictions %}
+    (function(){
+        var stored = {{ stored_predictions|safe }};
+        var tb = document.getElementById('storedTable');
+        tb.innerHTML = stored.map(function(d){
+            var diff = (d.high - d.low).toFixed(1);
+            var precip = '';
+            if (d.precip_prob != null) {
+                var probColor = d.precip_prob >= 60 ? '#c62828' : d.precip_prob >= 30 ? '#e65100' : '#2e7d32';
+                precip = '<td style=\"color:'+probColor+'\"><b>'+(d.precip_prob||0)+'%</b></td>'+
+                    '<td>'+(d.precip_amount != null ? d.precip_amount+'mm' : '-')+'</td>';
+            } else {
+                precip = '<td class=\"text-muted\">-</td><td class=\"text-muted\">-</td>';
+            }
+            return '<tr><td>'+d.date+'</td><td><b class=\"text-danger\">'+d.high+'℃</b></td>'+
+                '<td><b class=\"text-primary\">'+d.low+'℃</b></td>'+
+                '<td><small>'+diff+'℃</small></td>'+precip+'</tr>';
+        }).join('');
+    })();
+    {% endif %}
+
+    // 实时预测表（无缓存时兜底）
+    (function(){
+        var tb = document.getElementById('predTable');
+        if (!tb) return;
+        var ens = allPred['ensemble'] || Object.values(allPred)[0] || [];
+        tb.innerHTML = '<thead><tr><th>日期</th><th>最高</th><th>最低</th></tr></thead><tbody>'+
+            ens.map(function(d){return '<tr><td>'+d.date+'</td><td><b class="text-danger">'+d.high+'℃</b></td><td><b class="text-primary">'+d.low+'℃</b></td></tr>';}).join('')+'</tbody>';
+    })();
+
+    // 降水概率预报（数据均来自 Open-Meteo 免费 API）
+    {% if precip_forecast %}
+    (function(){
+        var precipFc = {{ precip_forecast|safe }};
+        // WMO code → 天气 + 图标
+        var weatherMap = {
+            0:'☀ 晴',1:'☀ 晴',2:'🌤 晴转多云',3:'🌥 多云转阴',
+            45:'🌫 雾',48:'🌫 雾',
+            51:'🌧 小雨',53:'🌧 小雨',55:'🌧 中雨',
+            56:'❄🌧 冻雨',57:'❄🌧 冻雨',
+            61:'🌧 小雨',63:'🌧 中雨',65:'🌧 大雨',
+            66:'❄🌧 冻雨',67:'❄🌧 冻雨',
+            71:'🌨 小雪',73:'🌨 中雪',75:'🌨 大雪',77:'🌨 霰',
+            80:'🌦 阵雨',81:'🌦 阵雨',82:'🌧 暴雨',
+            83:'🌧❄ 雨夹雪',84:'🌧❄ 雨夹雪',
+            85:'🌨 阵雪',86:'🌨 阵雪',
+            95:'⛈ 雷阵雨',96:'⛈ 雷阵雨(或冰雹)',99:'⛈ 雷阵雨(或冰雹)'
+        };
+        // 天气类型 → 卡片背景色
+        var cardBg = {
+            '晴':'#fffde7','晴转多云':'#fff8e1','多云转阴':'#f5f5f5',
+            '小雨':'#e3f2fd','中雨':'#bbdefb','大雨':'#90caf9','暴雨':'#64b5f6',
+            '阵雨':'#e1f5fe','雷阵雨':'#fff3e0',
+            '小雪':'#e8eaf6','中雪':'#c5cae9','大雪':'#9fa8da','阵雪':'#e8eaf6',
+            '冻雨':'#fce4ec','雨夹雪':'#f3e5f5','霰':'#eceff1',
+            '雾':'#eceff1','霾':'#cfd8dc','沙尘':'#ffe0b2'
+        };
+        var html = '';
+        precipFc.forEach(function(d){
+            var wcRaw = weatherMap[d.weathercode] || '⛅ 多云';
+            // 提取纯天气名用于背景色
+            var wcName = wcRaw.replace(/^[^\s]+\s/,'').split('(')[0];
+            var bg = cardBg[wcName] || '#fff';
+            var prob = d.precip_prob;
+            var probColor = prob >= 70 ? '#c62828' : prob >= 40 ? '#e65100' : prob >= 20 ? '#f9a825' : '#2e7d32';
+            var probLabel = prob != null ? prob+'%' : '--';
+            var hasPrecip = d.precip_mm > 0;
+            html += '<div class="border rounded p-2 mb-2" style="background:'+bg+'">'+
+                // 第一行：天气为主
+                '<div style="font-size:1.05em;font-weight:bold;margin-bottom:4px">'+
+                '📅 '+d.date.slice(5)+'  '+wcRaw+'</div>'+
+                // 第二行：降水概率 + 降水量
+                '<div class="d-flex justify-content-between align-items-center small">'+
+                '<span>降水概率 <b style="color:'+probColor+'">'+probLabel+'</b></span>'+
+                '<span>'+(hasPrecip ? '💧 预计 <b>'+d.precip_mm+'mm</b>' : '<span class="text-muted">无明显降水</span>')+'</span>'+
+                '</div>'+
+                // 概率条
+                '<div class="progress mt-1" style="height:6px">'+
+                '<div class="progress-bar" style="width:'+(prob||0)+'%;background:'+probColor+'"></div>'+
+                '</div></div>';
+        });
+        document.getElementById('precipForecast').innerHTML = html;
+    })();
+    {% endif %}
+
+    // 历史+预测对比
+    (function(){
+        var chart = echarts.init(document.getElementById('comparisonChart'));
+        var ens = allPred['ensemble'] || Object.values(allPred)[0] || [];
+        var rD = recent.map(function(d){return d.date;});
+        var rH = recent.map(function(d){return d.high;});
+        var rL = recent.map(function(d){return d.low;});
+        var pH = Array(recent.length).fill(null).concat(ens.map(function(d){return d.high;}));
+        var pL = Array(recent.length).fill(null).concat(ens.map(function(d){return d.low;}));
+        var allD = rD.concat(ens.map(function(d){return '预测:'+d.date;}));
+        chart.setOption({
+            tooltip:{trigger:'axis'}, legend:{data:['实际高温','实际低温','预测高温','预测低温']},
+            xAxis:{type:'category',data:allD,axisLabel:{rotate:45,fontSize:10}},
+            yAxis:{type:'value',name:'℃'},
+            series:[
+                {name:'实际高温',type:'line',data:rH.concat(Array(ens.length).fill(null)),smooth:true,itemStyle:{color:'#ee6666'}},
+                {name:'实际低温',type:'line',data:rL.concat(Array(ens.length).fill(null)),smooth:true,itemStyle:{color:'#5470c6'}},
+                {name:'预测高温',type:'line',data:pH,smooth:true,lineStyle:{type:'dashed',width:2},itemStyle:{color:'#ff9999'}},
+                {name:'预测低温',type:'line',data:pL,smooth:true,lineStyle:{type:'dashed',width:2},itemStyle:{color:'#99ccff'}}
+            ],
+            grid:{left:'4%',right:'4%',bottom:'15%',containLabel:true}
+        });
+        window.addEventListener('resize',function(){chart.resize();});
+    })();
+</script>
+{% endif %}
+{% endblock %}

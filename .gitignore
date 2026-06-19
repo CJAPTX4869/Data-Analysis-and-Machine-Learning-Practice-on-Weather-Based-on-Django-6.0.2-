@@ -1,0 +1,33 @@
+# 敏感信息
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+venv/
+env/
+.venv/
+
+# Django
+*.log
+*.pot
+local_settings.py
+db.sqlite3
+/staticfiles/
+/media/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# MySQL
+*.sql

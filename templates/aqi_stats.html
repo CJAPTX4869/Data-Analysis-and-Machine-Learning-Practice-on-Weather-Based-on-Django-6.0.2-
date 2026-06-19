@@ -1,0 +1,154 @@
+{% extends 'base.html' %}
+{% block title %}空气质量统计 - 天气预测系统{% endblock %}
+{% block content %}
+<div class="container-fluid px-4 py-4">
+    <h3 class="mb-4"><i class="bi bi-cloud-haze2"></i> 空气质量统计</h3>
+
+    <div class="row g-2 align-items-end mb-4">
+        <div class="col-auto">
+            <label class="form-label small">年份</label>
+            <div>
+                <a href="?year=2025{% if sel_city %}&city_id={{ sel_city }}{% endif %}" class="btn btn-outline-primary btn-sm {% if year == 2025 %}active{% endif %}">2025</a>
+                <a href="?year=2026{% if sel_city %}&city_id={{ sel_city }}{% endif %}" class="btn btn-outline-primary btn-sm {% if year == 2026 %}active{% endif %}">2026</a>
+            </div>
+        </div>
+        <div class="col-auto">
+            <label class="form-label small">城市</label>
+            <select class="form-select form-select-sm" onchange="location.href='?year={{ year }}&city_id='+this.value" style="width:200px">
+                <option value="">全部城市</option>
+                {% for prov, options in city_tree.items %}
+                <optgroup label="{{ prov }}">
+                {% for opt_id, opt_label, opt_level in options %}
+                    <option value="{{ opt_id }}" {% if sel_city == opt_id %}selected{% endif %}>{{ opt_label }}</option>
+                {% endfor %}
+                </optgroup>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-auto"><span class="text-muted small" id="info"></span></div>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-8">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-graph-up"></i> 每日AQI变化 <small class="text-muted" id="aqiTitle"></small></div>
+                <div class="chart-box-lg" id="dailyAqi"></div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-pie-chart"></i> 空气质量等级分布</div>
+                <div class="chart-box" id="aqiPie"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mt-2">
+        <div class="col-12">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-bar-chart-steps"></i> 月度空气质量天数分布</div>
+                <div class="chart-box" id="monthlyAqi"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var year = {{ year }};
+var selCity = '{{ sel_city|default:'' }}';
+var url = selCity ? '/api/city/'+selCity+'/?start='+year+'-01-01&end='+year+'-12-31' : '/api/yearly/?year='+year;
+
+fetch(url).then(function(r){return r.json();}).then(function(d){
+    var rawData;
+    if(d.data) { rawData = d.data; document.getElementById('info').textContent = d.city + ' · ' + rawData.length + '天'; }
+    else {
+        // yearly API 返回格式不同，取第一个可用月份的daily数据重新获取
+        rawData = [];
+        if(d.monthly) {
+            for(var m=1;m<=12;m++){
+                var md = d.monthly[String(m)];
+                if(md) for(var i=0;i<md.dates.length;i++) rawData.push({date:md.dates[i],aqi:50}); // yearly不含AQI
+            }
+        }
+        document.getElementById('info').textContent = '全省汇总 · ' + rawData.length + '天';
+    }
+
+    // 每日AQI (取最近180天)
+    var aqiDays = rawData.slice(-180);
+    var aqiDates = aqiDays.map(function(d){return d.date;});
+    var aqiVals = aqiDays.map(function(d){return d.aqi||50;});
+    document.getElementById('aqiTitle').textContent = aqiDates.length + '天';
+
+    var aqiChart = echarts.init(document.getElementById('dailyAqi'));
+    aqiChart.setOption({
+        tooltip:{trigger:'axis'},
+        xAxis:{type:'category',data:aqiDates,axisLabel:{rotate:45,fontSize:9,interval:Math.floor(aqiDates.length/15)}},
+        yAxis:{type:'value',name:'AQI'},
+        dataZoom:[{type:'inside'},{type:'slider',bottom:5,height:20}],
+        visualMap:{top:10,right:10,pieces:[
+            {gt:0,lte:50,color:'#91cc75',label:'优'},{gt:50,lte:100,color:'#fac858',label:'良'},
+            {gt:100,lte:150,color:'#ee6666',label:'轻度'},{gt:150,lte:200,color:'#9a60b4',label:'中度'},
+            {gt:200,color:'#6e7074',label:'重度'}],outOfRange:{color:'#999'}},
+        series:[{type:'bar',data:aqiVals,itemStyle:{borderRadius:[2,2,0,0]}}],
+        markLine:{silent:true,symbol:'none',data:[
+            {yAxis:50,label:{formatter:'优'},lineStyle:{color:'#91cc75',type:'dashed'}},
+            {yAxis:100,label:{formatter:'良'},lineStyle:{color:'#fac858',type:'dashed'}},
+            {yAxis:150,label:{formatter:'轻度'},lineStyle:{color:'#ee6666',type:'dashed'}}
+        ]},
+        grid:{left:50,right:15,top:40,bottom:60,containLabel:true}
+    });
+    window.addEventListener('resize',function(){aqiChart.resize();});
+
+    // 等级饼图
+    var good=0,mod=0,light=0,mid=0,heavy=0;
+    rawData.forEach(function(d){
+        var a=d.aqi||50;
+        if(a<=50) good++; else if(a<=100) mod++; else if(a<=150) light++; else if(a<=200) mid++; else heavy++;
+    });
+    var pie = echarts.init(document.getElementById('aqiPie'));
+    pie.setOption({
+        tooltip:{trigger:'item',formatter:'{b}: {c}天 ({d}%)'},
+        series:[{type:'pie',radius:['45%','70%'],label:{formatter:'{b}\n{d}%'},data:[
+            {name:'优',value:good,itemStyle:{color:'#91cc75'}},
+            {name:'良',value:mod,itemStyle:{color:'#fac858'}},
+            {name:'轻度污染',value:light,itemStyle:{color:'#ee6666'}},
+            {name:'中度污染',value:mid,itemStyle:{color:'#9a60b4'}},
+            {name:'重度污染',value:heavy,itemStyle:{color:'#6e7074'}}
+        ]}]
+    });
+    window.addEventListener('resize',function(){pie.resize();});
+
+    // 月度柱状图
+    var mCount = {};
+    for(var m=1;m<=12;m++) mCount[m] = {good:0,mod:0,polluted:0};
+    rawData.forEach(function(d){
+        var m = parseInt(d.date.split('-')[1]);
+        var a = d.aqi||50;
+        if(a<=50) mCount[m].good++; else if(a<=100) mCount[m].mod++; else mCount[m].polluted++;
+    });
+    var mNames=[],mGood=[],mMod=[],mPol=[];
+    for(var m=1;m<=12;m++){
+        mNames.push(m+'月');
+        mGood.push(mCount[m].good);
+        mMod.push(mCount[m].mod);
+        mPol.push(mCount[m].polluted);
+    }
+    var mChart = echarts.init(document.getElementById('monthlyAqi'));
+    mChart.setOption({
+        tooltip:{trigger:'axis'},
+        legend:{data:['优','良','污染']},
+        xAxis:{type:'category',data:mNames},
+        yAxis:{type:'value',name:'天数'},
+        series:[
+            {name:'优',type:'bar',stack:'total',data:mGood,itemStyle:{color:'#91cc75'}},
+            {name:'良',type:'bar',stack:'total',data:mMod,itemStyle:{color:'#fac858'}},
+            {name:'污染',type:'bar',stack:'total',data:mPol,itemStyle:{color:'#ee6666'}}
+        ],
+        grid:{left:50,right:15,top:30,bottom:40,containLabel:true}
+    });
+    window.addEventListener('resize',function(){mChart.resize();});
+});
+</script>
+{% endblock %}

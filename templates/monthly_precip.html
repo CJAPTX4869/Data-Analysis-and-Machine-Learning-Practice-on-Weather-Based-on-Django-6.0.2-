@@ -1,0 +1,181 @@
+{% extends 'base.html' %}
+{% block title %}月度降水统计 - 天气预测系统{% endblock %}
+{% block content %}
+<div class="container-fluid px-4 py-4">
+    <h3 class="mb-3"><i class="bi bi-cloud-rain"></i> 月度降水统计 <span class="text-muted fs-5">{{ year }}年</span></h3>
+
+    <div class="row g-2 align-items-end mb-4">
+        <div class="col-auto">
+            <label class="form-label small mb-1">年份</label>
+            <div>
+                <a href="?year=2025{% if sel_city %}&city_id={{ sel_city }}{% endif %}{% if sel_prov %}&prov={{ sel_prov }}{% endif %}" class="btn btn-outline-primary btn-sm {% if year == 2025 %}active{% endif %}">2025</a>
+                <a href="?year=2026{% if sel_city %}&city_id={{ sel_city }}{% endif %}{% if sel_prov %}&prov={{ sel_prov }}{% endif %}" class="btn btn-outline-primary btn-sm {% if year == 2026 %}active{% endif %}">2026</a>
+            </div>
+        </div>
+        <div class="col-auto">
+            <label class="form-label small mb-1">省份</label>
+            <select class="form-select form-select-sm" onchange="changeProv(this.value)" style="width:120px">
+                <option value="">全国</option>
+                {% for prov in city_tree.keys %}
+                <option value="{{ prov }}" {% if sel_prov == prov %}selected{% endif %}>{{ prov }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label small mb-1">城市</label>
+            <select class="form-select form-select-sm" onchange="changeCity(this.value)" style="width:200px">
+                <option value="">全部汇总</option>
+                {% for prov, options in city_tree.items %}
+                <optgroup label="{{ prov }}">
+                {% for opt_id, opt_label, opt_level in options %}
+                    <option value="{{ opt_id }}" {% if sel_city == opt_id %}selected{% endif %}>{{ opt_label }}</option>
+                {% endfor %}
+                </optgroup>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-auto"><span class="text-muted small" id="totalInfo"></span></div>
+    </div>
+
+    <!-- 月度总览卡片 -->
+    <div class="row g-3 mb-4" id="monthCards"></div>
+
+    <!-- 月度降水柱状图 -->
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-bar-chart-fill"></i> 月度降水总量 & 降水天数</div>
+                <div class="chart-box-lg" id="monthBarChart"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 每日降水详情（按月份展开） -->
+    <div class="row g-4" id="dailyCharts"></div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var year = {{ year }};
+var selCity = '{{ sel_city|default:'' }}';
+var selProv = '{{ sel_prov|default:'' }}';
+var monthNames = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+
+// 降水类型颜色
+var precipColors = {
+    '小雨':'#91cc75','中雨':'#5470c6','大雨':'#ee6666','暴雨':'#9a60b4',
+    '阵雨':'#48c9b0','雷阵雨':'#f39c12',
+    '小雪':'#aed6f1','中雪':'#85c1e9','大雪':'#5dade2',
+    '阵雪':'#7fb3d8','冻雨':'#e74c3c','冰雹':'#8e44ad',
+    '霰':'#bdc3c7','雨夹雪':'#73c0de',
+    '晴':'#ffeaa7','多云':'#dfe6e9','阴':'#b2bec3',
+    '晴转多云':'#fdcb6e','多云转阴':'#636e72',
+    '雾':'#b2bec3','霾':'#636e72','沙尘':'#e17055'
+};
+
+function changeProv(p) {
+    var params = '?year='+year;
+    if(p) params += '&prov=' + encodeURIComponent(p);
+    location.href = params;
+}
+function changeCity(cid) {
+    var params = '?year='+year;
+    if(selProv) params += '&prov=' + encodeURIComponent(selProv);
+    if(cid) params += '&city_id='+cid;
+    location.href = params;
+}
+
+function loadData() {
+    var apiUrl = '/api/precipitation/monthly/?year=' + year;
+    if (selCity) apiUrl += '&city_id=' + selCity;
+    if (selProv) apiUrl += '&prov=' + encodeURIComponent(selProv);
+
+    fetch(apiUrl)
+        .then(function(r) { return r.json(); })
+        .then(function(resp) {
+            renderOverview(resp.monthly);
+            renderMonthBar(resp.monthly);
+            renderDailyCharts(resp.monthly);
+            var totalP = resp.monthly.reduce(function(s,m){return s+m.precip_total;},0);
+            var totalD = resp.monthly.reduce(function(s,m){return s+m.precip_days;},0);
+            var unit = selCity ? '' : '/城';
+            document.getElementById('totalInfo').textContent = '年总降水 '+totalP.toFixed(1)+'mm'+unit+' | 降水 '+totalD+' 天';
+        });
+}
+
+function renderOverview(monthly) {
+    var totalPrecip = monthly.reduce(function(s,m){return s+m.precip_total;},0);
+    var totalDays = monthly.reduce(function(s,m){return s+m.precip_days;},0);
+    var maxMonth = monthly.reduce(function(a,b){return b.precip_total>a.precip_total?b:a;},monthly[0]);
+    var html = '<div class="col-xl-3 col-md-6"><div class="stat-card bg-gradient-primary"><div class="stat-value">'+totalPrecip.toFixed(1)+' mm</div><div class="stat-label">年总降水量</div></div></div>';
+    html += '<div class="col-xl-3 col-md-6"><div class="stat-card bg-gradient-info"><div class="stat-value">'+totalDays+' 天</div><div class="stat-label">年降水天数</div></div></div>';
+    html += '<div class="col-xl-3 col-md-6"><div class="stat-card bg-gradient-warning"><div class="stat-value">'+maxMonth.month+'</div><div class="stat-label">最多降水月份 ('+maxMonth.precip_total.toFixed(1)+'mm)</div></div></div>';
+    html += '<div class="col-xl-3 col-md-6"><div class="stat-card bg-gradient-success"><div class="stat-value">'+(totalDays>0?(totalPrecip/totalDays).toFixed(1):'0')+' mm</div><div class="stat-label">日均降水量</div></div></div>';
+    document.getElementById('monthCards').innerHTML = html;
+}
+
+function renderMonthBar(monthly) {
+    var chart = echarts.init(document.getElementById('monthBarChart'));
+    chart.setOption({
+        tooltip: {trigger:'axis',axisPointer:{type:'shadow'},
+            formatter:function(ps){
+                var d=monthly[ps[0].dataIndex];
+                return '<b>'+d.month+'</b><br/>降水总量: '+d.precip_total+'mm<br/>降水天数: '+d.precip_days+'天';
+            }},
+        grid:{left:'5%',right:'5%',bottom:'8%',top:'5%',containLabel:true},
+        xAxis:{type:'category',data:monthNames},
+        yAxis:[
+            {type:'value',name:'降水量(mm)'},
+            {type:'value',name:'天数'}
+        ],
+        series:[
+            {name:'降水总量',type:'bar',data:monthly.map(function(d){return d.precip_total;}),
+                itemStyle:{color:'#5470c6',borderRadius:[8,8,0,0]},barWidth:'50%'},
+            {name:'降水天数',type:'line',yAxisIndex:1,
+                data:monthly.map(function(d){return d.precip_days;}),
+                itemStyle:{color:'#ee6666'},symbol:'circle',smooth:true}
+        ]
+    });
+    window.addEventListener('resize',function(){chart.resize();});
+}
+
+function renderDailyCharts(monthly) {
+    var container = document.getElementById('dailyCharts');
+    var iconMap = {'小雨':'🌧','中雨':'🌧','大雨':'🌧','暴雨':'🌧','阵雨':'🌦','雷阵雨':'⛈',
+        '小雪':'🌨','中雪':'🌨','大雪':'🌨','阵雪':'🌨','冻雨':'❄','冰雹':'🧊','霰':'🌨','雨夹雪':'🌧❄',
+        '晴':'☀','多云':'⛅','阴':'☁','晴转多云':'🌤','多云转阴':'🌥','雾':'🌫','霾':'🌫','沙尘':'💨'};
+
+    container.innerHTML = monthly.map(function(m){
+        if (m.daily.length === 0) return '';
+        // 找日均最大值作为比例尺
+        var maxPrecip = Math.max.apply(null, m.daily.map(function(d){return d.precip;})) || 1;
+        var bars = m.daily.map(function(d){
+            var icon = iconMap[d.weather] || '';
+            var barW = Math.max(1, (d.precip / maxPrecip * 100));
+            var color = precipColors[d.weather] || '#ddd';
+            var label = d.date.slice(5);
+            var title = d.date + ' ' + d.weather + ' ' + d.precip + 'mm';
+            if (d.precip === 0) {
+                // 0mm：细灰线 + 天气标签
+                return '<div title="'+title+'" style="display:flex;align-items:center;gap:4px;font-size:10px;height:22px">'+
+                    '<span style="width:28px;text-align:right;color:#999">'+label+'</span>'+
+                    '<span style="width:2px;height:10px;background:#ddd;border-radius:1px"></span>'+
+                    '<span style="color:#999">'+icon+' '+d.weather+' 0mm</span></div>';
+            }
+            return '<div title="'+title+'" style="display:flex;align-items:center;gap:4px;font-size:10px;height:22px">'+
+                '<span style="width:28px;text-align:right;color:#666">'+label+'</span>'+
+                '<span style="height:14px;width:'+barW+'%;min-width:3px;background:'+color+';border-radius:2px"></span>'+
+                '<span style="color:#333;white-space:nowrap">'+icon+' <b>'+d.precip+'mm</b></span></div>';
+        }).join('');
+
+        return '<div class="col-lg-6 col-xl-4 mb-3"><div class="chart-container">'+
+            '<div class="chart-title">'+m.month+' 每日降水 <small class="text-muted">'+
+            (typeof m.precip_total==='number'?m.precip_total.toFixed(1):m.precip_total)+'mm | '+m.precip_days+'天</small></div>'+
+            '<div style="max-height:380px;overflow-y:auto;padding:8px 12px">'+bars+'</div></div></div>';
+    }).join('');
+}
+
+loadData();
+</script>
+{% endblock %}

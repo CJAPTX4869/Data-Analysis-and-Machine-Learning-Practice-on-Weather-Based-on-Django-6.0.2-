@@ -1,0 +1,235 @@
+{% extends 'base.html' %}
+{% block title %}{{ city.name }} - 每日天气{% endblock %}
+{% block content %}
+<div class="container-fluid px-4 py-4">
+    <nav aria-label="breadcrumb"><ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'index' %}">首页</a></li>
+        <li class="breadcrumb-item active">{{ city.province }} - {{ city.name }}</li>
+    </ol></nav>
+
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h4><i class="bi bi-geo-alt-fill text-primary"></i> {{ city.name }} <small class="text-muted fs-6">每日天气详情</small></h4>
+        <div class="d-flex align-items-center gap-2">
+            <small class="text-muted">共 <b>{{ total_days }}</b> 天</small>
+            <form method="get" class="d-flex align-items-center gap-1" id="dateForm">
+                <input type="date" name="start" class="form-control form-control-sm" value="{{ start_date }}" style="width:140px" placeholder="开始日期">
+                <span class="text-muted">~</span>
+                <input type="date" name="end" class="form-control form-control-sm" value="{{ end_date }}" style="width:140px" placeholder="结束日期">
+                <button type="submit" class="btn btn-sm btn-outline-primary">查询</button>
+                <a href="?" class="btn btn-sm btn-outline-secondary">清除</a>
+            </form>
+        </div>
+    </div>
+
+    <!-- ====== 每日温度折线图 ====== -->
+    <div class="row g-4">
+        <div class="col-12">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-graph-up"></i> 每日温度变化 <small class="text-muted">{{ total_days }}天</small></div>
+                <div class="chart-box-lg" id="dailyTemp"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ====== 每日AQI + 天气日历 ====== -->
+    <div class="row g-4 mt-2">
+        <div class="col-lg-8">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-activity"></i> 每日空气质量 (AQI)</div>
+                <div class="chart-box" id="dailyAqi"></div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-calendar-heart"></i> 天气状况分布</div>
+                <div class="chart-box" id="weatherPie"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ====== 每日风力风向 ====== -->
+    <div class="row g-4 mt-2">
+        <div class="col-lg-6">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-compass"></i> 每日风向分布</div>
+                <div class="chart-box" id="windRadar"></div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-wind"></i> 每日风力等级</div>
+                <div class="chart-box" id="windPower"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ====== 每日天气数据表 ====== -->
+    <div class="row g-4 mt-2">
+        <div class="col-12">
+            <div class="table-card">
+                <div class="chart-title"><i class="bi bi-table"></i> 每日天气数据 <small class="text-muted">最近60天</small></div>
+                <div style="max-height:500px;overflow-y:auto;">
+                    <table class="table table-sm table-hover mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr><th>日期</th><th>周几</th><th>最高℃</th><th>最低℃</th><th>温差</th><th>天气</th><th>风向</th><th>风力</th><th>AQI</th><th>质量</th></tr>
+                        </thead>
+                        <tbody id="dailyTable"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    var tempData = {{ temp_data|safe }};
+    var aqiData = {{ aqi_data|safe }};
+    var condDist = {{ condition_dist|safe }};
+
+    // 1. 每日温度折线图
+    (function(){
+        var chart = echarts.init(document.getElementById('dailyTemp'));
+        var dates = tempData.map(function(d){return d.date;});
+        chart.setOption({
+            tooltip:{trigger:'axis'},
+            legend:{data:['最高温度','最低温度'],top:5},
+            xAxis:{type:'category',data:dates,axisLabel:{rotate:45,fontSize:9,interval:Math.floor(dates.length/15)}},
+            yAxis:{type:'value',name:'℃'},
+            dataZoom:[{type:'inside',start:0,end:100},{type:'slider',bottom:5,height:20}],
+            series:[
+                {name:'最高温度',type:'line',data:tempData.map(function(d){return d.high;}),smooth:false,
+                 itemStyle:{color:'#ee6666'},areaStyle:{opacity:0.08}},
+                {name:'最低温度',type:'line',data:tempData.map(function(d){return d.low;}),smooth:false,
+                 itemStyle:{color:'#5470c6'},areaStyle:{opacity:0.08}}
+            ],
+            grid:{left:'5%',right:'5%',top:'12%',bottom:'15%',containLabel:true}
+        });
+        window.addEventListener('resize',function(){chart.resize();});
+    })();
+
+    // 2. 每日AQI柱状图
+    (function(){
+        var chart = echarts.init(document.getElementById('dailyAqi'));
+        var dates = aqiData.map(function(d){return d.date;});
+        chart.setOption({
+            tooltip:{trigger:'axis'},
+            xAxis:{type:'category',data:dates,axisLabel:{rotate:45,fontSize:9,interval:Math.floor(dates.length/15)}},
+            yAxis:{type:'value',name:'AQI'},
+            dataZoom:[{type:'inside',start:0,end:100},{type:'slider',bottom:5,height:20}],
+            visualMap:{top:10,right:10,pieces:[
+                {gt:0,lte:50,color:'#91cc75',label:'优'},
+                {gt:50,lte:100,color:'#fac858',label:'良'},
+                {gt:100,lte:150,color:'#ee6666',label:'轻度'},
+                {gt:150,lte:200,color:'#9a60b4',label:'中度'},
+                {gt:200,color:'#6e7074',label:'重度'}
+            ],outOfRange:{color:'#999'}},
+            series:[{type:'bar',data:aqiData.map(function(d){return d.aqi;}),itemStyle:{borderRadius:[2,2,0,0]}}],
+            grid:{left:'5%',right:'5%',bottom:'15%',containLabel:true}
+        });
+        window.addEventListener('resize',function(){chart.resize();});
+    })();
+
+    // 3. 天气分布饼图
+    (function(){
+        var chart = echarts.init(document.getElementById('weatherPie'));
+        chart.setOption({
+            tooltip:{trigger:'item',formatter:'{b}: {c}天 ({d}%)'},
+            series:[{type:'pie',radius:['40%','70%'],data:condDist,
+                label:{formatter:'{b}\n{d}%'},emphasis:{itemStyle:{shadowBlur:10,shadowColor:'rgba(0,0,0,0.3)'}}}]
+        });
+        window.addEventListener('resize',function(){chart.resize();});
+    })();
+
+    // 4. 风向雷达图
+    (function(){
+        var chart = echarts.init(document.getElementById('windRadar'));
+        // 从后端数据统计风向
+        var dirs = {};
+        tempData.forEach(function(d,i){
+            var wd = (aqiData[i]||{}).wind_dir || '';
+            if(wd) dirs[wd] = (dirs[wd]||0)+1;
+        });
+        // Use wind data from API (with date range)
+        var apiUrl = '/api/city/{{ city.id }}/';
+        var params = new URLSearchParams(window.location.search);
+        if(params.get('start')) apiUrl += '?start='+params.get('start')+'&end='+(params.get('end')||'');
+        fetch(apiUrl)
+            .then(function(r){return r.json();})
+            .then(function(resp){
+                var windMap = {};
+                resp.data.forEach(function(d){
+                    var w = d.wind_direction || d.windDirection || '';
+                    if(w) windMap[w] = (windMap[w]||0)+1;
+                });
+                var names = Object.keys(windMap);
+                var vals = names.map(function(n){return windMap[n];});
+                var maxV = Math.max.apply(null,vals.concat([1]));
+                chart.setOption({
+                    tooltip:{},
+                    radar:{indicator:names.map(function(n){return {name:n,max:maxV+5};}),shape:'polygon'},
+                    series:[{type:'radar',data:[{value:vals,name:'风向频率',areaStyle:{opacity:0.3}}],itemStyle:{color:'#5470c6'}}]
+                });
+            });
+        window.addEventListener('resize',function(){chart.resize();});
+    })();
+
+    // 5. 风力等级分布 (用同一API URL)
+    (function(){
+        var chart = echarts.init(document.getElementById('windPower'));
+        fetch(apiUrl)
+            .then(function(r){return r.json();})
+            .then(function(resp){
+                var pwMap = {};
+                resp.data.forEach(function(d){
+                    var p = d.wind_power || d.windPower || '微风';
+                    pwMap[p] = (pwMap[p]||0)+1;
+                });
+                var names = Object.keys(pwMap).sort();
+                var vals = names.map(function(n){return pwMap[n];});
+                chart.setOption({
+                    tooltip:{trigger:'axis'},
+                    xAxis:{type:'category',data:names,axisLabel:{rotate:30}},
+                    yAxis:{type:'value',name:'天数'},
+                    series:[{type:'bar',data:vals,itemStyle:{color:function(p){
+                        var colors=['#91cc75','#fac858','#ee6666','#5470c6','#73c0de','#fc8452','#9a60b4'];
+                        return colors[p.dataIndex%colors.length];
+                    },borderRadius:[6,6,0,0]}}],
+                    grid:{left:'5%',right:'5%',bottom:'15%',containLabel:true}
+                });
+            });
+        window.addEventListener('resize',function(){chart.resize();});
+    })();
+
+    // 6. 每日数据表格 (用同一API URL)
+    (function(){
+        var weekdays = ['日','一','二','三','四','五','六'];
+        fetch(apiUrl)
+            .then(function(r){return r.json();})
+            .then(function(resp){
+                var tb = document.getElementById('dailyTable');
+                var rows = resp.data.slice(0,60);
+                rows.forEach(function(d){
+                    var dt = new Date(d.date);
+                    var wd = weekdays[dt.getDay()];
+                    var aqiBadge = d.aqi!=null?(d.aqi<=50?'bg-success':d.aqi<=100?'bg-info':d.aqi<=150?'bg-warning':'bg-danger'):'bg-secondary';
+                    tb.innerHTML += '<tr>'+
+                        '<td><small>'+d.date+'</small></td>'+
+                        '<td><small>周'+wd+'</small></td>'+
+                        '<td><b class="text-danger">'+d.temperature_high+'℃</b></td>'+
+                        '<td><b class="text-primary">'+d.temperature_low+'℃</b></td>'+
+                        '<td>'+(d.temperature_high-d.temperature_low)+'℃</td>'+
+                        '<td>'+d.weather_condition+'</td>'+
+                        '<td><small>'+d.wind_direction+'</small></td>'+
+                        '<td><small>'+d.wind_power+'</small></td>'+
+                        '<td>'+(d.aqi!=null?d.aqi:'N/A')+'</td>'+
+                        '<td><span class="badge '+aqiBadge+'">'+(d.aqi_level!=null?d.aqi_level:'暂无')+'</span></td>'+
+                        '<td><span style="color:#4a90d9">'+(d.precipitation!=null?d.precipitation.toFixed(1)+'mm':'-')+'</span></td>'+
+                        '<td><small>'+(d.humidity!=null?d.humidity.toFixed(0)+'%':'-')+'</small></td>'+
+                        '</tr>';
+                });
+            });
+    })();
+</script>
+{% endblock %}

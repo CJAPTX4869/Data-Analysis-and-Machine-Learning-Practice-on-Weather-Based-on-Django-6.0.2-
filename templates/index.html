@@ -1,0 +1,309 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}首页 - 天气预测数据分析可视化系统{% endblock %}
+{% block content %}
+<div class="container-fluid px-4 py-4">
+    <!-- 统计卡片 -->
+    <div class="row g-3 mb-4">
+        <div class="col-xl-3 col-md-6">
+            <div class="stat-card bg-gradient-primary">
+                <div class="stat-icon"><i class="bi bi-building"></i></div>
+                <div class="stat-value">{{ stats.total_cities }}</div>
+                <div class="stat-label">全国监测城市</div>
+            </div>
+        </div>
+        <div class="col-xl-3 col-md-6">
+            <div class="stat-card bg-gradient-warning">
+                <div class="stat-icon"><i class="bi bi-pin-map-fill"></i></div>
+                <div class="stat-value">{{ stats.hubei_city_count }}</div>
+                <div class="stat-label">🏁 湖北省城市</div>
+            </div>
+        </div>
+        <div class="col-xl-3 col-md-6">
+            <div class="stat-card bg-gradient-success">
+                <div class="stat-icon"><i class="bi bi-database"></i></div>
+                <div class="stat-value">{{ stats.total_records }}</div>
+                <div class="stat-label">数据记录</div>
+            </div>
+        </div>
+        <div class="col-xl-3 col-md-6">
+            <div class="stat-card bg-gradient-info">
+                <div class="stat-icon"><i class="bi bi-thermometer-half"></i></div>
+                <div class="stat-value">{{ stats.avg_high }}℃ / {{ stats.avg_low }}℃</div>
+                <div class="stat-label">今日全国均温</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <!-- 中国地图 -->
+        <div class="col-lg-8">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-geo-alt-fill"></i> 全国城市温度分布图</div>
+                <div class="chart-box-lg" id="chinaMap"></div>
+            </div>
+        </div>
+        <!-- 右侧：省份选择 + 城市列表 -->
+        <div class="col-lg-4">
+            <div class="chart-container mb-3">
+                <div class="chart-title"><i class="bi bi-list-ul"></i> 城市列表</div>
+                <div class="row g-2 mb-2">
+                    <div class="col-7">
+                        <select class="form-select form-select-sm" id="provSelect" onchange="filterByProvince()">
+                            <option value="">全部省份</option>
+                            {% for prov, cities in provinces_dict.items %}
+                            <option value="{{ prov }}">{{ prov }} ({{ cities|length }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-5">
+                        <input type="text" class="form-control form-control-sm" placeholder="搜索城市" onkeyup="filterCities()" id="citySearch">
+                    </div>
+                </div>
+                <div style="max-height: 420px; overflow-y: auto;" id="cityListContainer">
+                    {% for prov, cities in provinces_dict.items %}
+                        {% for c in cities %}
+                        <a href="{% url 'city_detail' c.id %}" class="text-decoration-none city-row" data-prov="{{ prov }}">
+                            <div class="d-flex justify-content-between align-items-center p-1 border-bottom small">
+                                <span>{% if c.is_key %}⭐{% endif %} {{ c.name }} <small class="text-muted">{{ prov }}</small></span>
+                                <i class="bi bi-chevron-right text-muted"></i>
+                            </div>
+                        </a>
+                        {% endfor %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 全国今日天气表格 -->
+    <div class="row g-4 mt-2">
+        <div class="col-12">
+            <div class="table-card">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="chart-title mb-0"><i class="bi bi-table"></i> 全国今日天气</div>
+                    <select class="form-select form-select-sm w-auto" id="tableProvSelect" onchange="filterTable()">
+                        <option value="">全部省份</option>
+                        {% for prov in provinces_dict.keys %}
+                        <option value="{{ prov }}">{{ prov }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div style="max-height: 400px; overflow-y: auto;">
+                <table class="table table-sm table-hover mb-0" id="weatherTable">
+                    <thead class="table-light sticky-top"><tr>
+                        <th>城市</th><th>省份</th><th>高温</th><th>低温</th><th>天气</th><th>降水</th><th>AQI</th>
+                    </tr></thead>
+                    <tbody id="tableBody"></tbody>
+                </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ====== 武汉13区+全部街镇 ====== -->
+    {% if wuhan_today %}
+    <div class="row g-4 mt-2">
+        <div class="col-12">
+            <div class="chart-container" style="background: linear-gradient(135deg, #e8f4fd 0%, #d0eaff 100%); border: 2px solid #0d6efd;">
+                <div class="chart-title text-primary">
+                    <i class="bi bi-building-fill"></i> 🔥 武汉市 今日 {{ wuhan_today.temperature_high }}℃/{{ wuhan_today.temperature_low }}℃ {{ wuhan_today.weather_condition }}
+                    <small class="text-muted ms-2">13区 · 全部街镇</small>
+                </div>
+                {% for item in wuhan_structure %}
+                <div class="mb-3">
+                    <div class="fw-bold small text-primary mb-1" style="border-bottom:1px dashed #bcd8f0;padding-bottom:2px">
+                        {{ item.district.name }} <span class="text-muted fw-normal">({{ item.towns|length }}街镇)</span>
+                        <span class="ms-2 text-muted fw-normal" id="wh-dist-{{ item.district.id }}">-</span>
+                    </div>
+                    <div class="row g-1">
+                        {% for t in item.towns %}
+                        <div class="col-xl-2 col-lg-3 col-md-4 col-6">
+                            <div class="card border-primary border-opacity-10 h-100"><div class="card-body text-center py-1 px-1">
+                                <small style="font-size:0.7rem">{{ t.name }}</small>
+                                <div style="font-size:0.65rem" class="text-muted" id="wtown-{{ t.id }}">-</div>
+                            </div></div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- ====== 黄石6区县+全部街镇 ====== -->
+    {% if huangshi_today %}
+    <div class="row g-4 mt-2">
+        <div class="col-12">
+            <div class="chart-container" style="background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); border: 2px solid #fd7e14;">
+                <div class="chart-title text-warning">
+                    <i class="bi bi-geo-fill"></i> 🔶 黄石市 今日 {{ huangshi_today.temperature_high }}℃/{{ huangshi_today.temperature_low }}℃ {{ huangshi_today.weather_condition }}
+                    <small class="text-muted ms-2">6区县 · 全部街镇</small>
+                </div>
+                {% for item in huangshi_structure %}
+                <div class="mb-3">
+                    <div class="fw-bold small text-warning mb-1" style="border-bottom:1px dashed #ffe0b2;padding-bottom:2px">
+                        {{ item.district.name }} <span class="text-muted fw-normal">({{ item.towns|length }}街镇)</span>
+                        <span class="ms-2 text-muted fw-normal" id="hs-dist-{{ item.district.id }}">-</span>
+                    </div>
+                    <div class="row g-1">
+                        {% for t in item.towns %}
+                        <div class="col-xl-2 col-lg-3 col-md-4 col-6">
+                            <div class="card border-warning border-opacity-10 h-100"><div class="card-body text-center py-1 px-1">
+                                <small style="font-size:0.7rem">{{ t.name }}</small>
+                                <div style="font-size:0.65rem" class="text-muted" id="hstown-{{ t.id }}">-</div>
+                            </div></div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var mapData = {{ map_data|safe }};
+
+// 中国地图 - 城市轮廓标记 + 交互
+(function() {
+    var chart = echarts.init(document.getElementById('chinaMap'));
+    var scatterData = mapData.map(function(d) {
+        return { name: d.name, value: [d.lng, d.lat, d.value],
+            temp_low: d.temp_low, weather: d.weather, province: d.province,
+            cityId: d.id, aqi: d.aqi, aqi_level: d.aqi_level,
+            precipitation: d.precipitation, humidity: d.humidity };
+    });
+    chart.setOption({
+        tooltip: { trigger: 'item', backgroundColor: 'rgba(20,22,30,0.94)', borderColor: '#444', textStyle: {color:'#fff',fontSize:13},
+            formatter: function(p) {
+                if (p.seriesType === 'effectScatter' || p.seriesType === 'scatter') {
+                    return '<div style="font-size:16px;font-weight:bold;margin-bottom:4px">🏙️ ' + p.name + '</div>'
+                        + '<div style="display:flex;gap:12px;margin:4px 0">'
+                        + '<span>🌡 高温 <b style="color:#ff6b6b;font-size:15px">' + p.data.value[2] + '℃</b></span>'
+                        + '<span>❄ 低温 <b style="color:#6ba3ff;font-size:15px">' + p.data.temp_low + '℃</b></span>'
+                        + '</div>'
+                        + '<div style="margin:4px 0">☁ ' + p.data.weather + ' | 💨 AQI ' + (p.data.aqi != null ? p.data.aqi : 'N/A') + '</div>'
+                        + '<div style="margin:4px 0;color:#4a90d9">💧 降水 ' + (p.data.precipitation != null ? p.data.precipitation.toFixed(1) + 'mm' : 'N/A') + ' | 🌫 湿度 ' + (p.data.humidity != null ? p.data.humidity.toFixed(0) + '%' : 'N/A') + '</div>'
+                        + '<div style="color:#aaa;font-size:11px">📍 ' + p.data.province + ' | 点击查看详情</div>';
+                }
+            }
+        },
+        geo: { map: 'china', roam: true, zoom: 1.15, center: [104.5, 36],
+            label: { show: true, fontSize: 10, color: '#666', fontFamily: 'Microsoft YaHei' },
+            itemStyle: { areaColor: '#f3f6fa', borderColor: '#c0d4e8', borderWidth: 1.2, shadowColor: 'rgba(0,0,0,0.06)', shadowBlur: 6 },
+            emphasis: { label: {fontSize:13,color:'#333',fontWeight:'bold'}, itemStyle: {areaColor:'#e2ebf5',borderColor:'#5b9bd5',borderWidth:2} }
+        },
+        visualMap: { min: -30, max: 45, left: 20, bottom: 20, text: ['高温', '低温'],
+            textStyle: {fontSize:12,color:'#666'}, calculable: true, orient: 'vertical', itemWidth: 14, itemHeight: 140,
+            inRange: { color: ['#313695','#4575b4','#74add1','#abd9e9','#e0f3f8','#ffffbf','#fee090','#fdae61','#f46d43','#d73027'] }
+        },
+        series: [{
+            name: '城市', type: 'effectScatter', coordinateSystem: 'geo',
+            data: scatterData,
+            symbolSize: function(val) { return Math.max(6, Math.abs(val[2]) * 0.35 + 7); },
+            showEffectOn: 'render',
+            rippleEffect: { brushType: 'stroke', scale: 3, period: 5, color: '#fff' },
+            itemStyle: { borderColor: '#fff', borderWidth: 1.5, borderType: 'solid', shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.25)' },
+            emphasis: { scale: 3, itemStyle: { shadowBlur: 20, shadowColor: 'rgba(0,0,0,0.5)', borderWidth: 3, borderColor: '#ffd700' } },
+            label: { show: true, position: 'right', fontSize: 9, color: '#555', formatter: function(p) { return p.name.length>3 ? p.name.slice(0,3)+'..' : p.name; },
+                emphasis: { fontSize: 14, color: '#333', fontWeight: 'bold' } },
+            zlevel: 1
+        }]
+    });
+    // 点击跳转城市详情
+    chart.on('click', function(params) {
+        if (params.seriesType === 'effectScatter' && params.data.cityId) {
+            window.location.href = '/city/' + params.data.cityId + '/';
+        }
+    });
+    window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+// 省份筛选（城市列表）
+function filterByProvince() {
+    var p = document.getElementById('provSelect').value;
+    document.querySelectorAll('.city-row').forEach(function(el) {
+        el.style.display = !p || el.dataset.prov === p ? '' : 'none';
+    });
+}
+function filterCities() {
+    var q = document.getElementById('citySearch').value.toLowerCase();
+    document.querySelectorAll('.city-row').forEach(function(el) {
+        el.style.display = el.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+}
+
+// 全国今日天气表格
+function filterTable() {
+    var p = document.getElementById('tableProvSelect').value;
+    document.querySelectorAll('#tableBody tr').forEach(function(tr) {
+        tr.style.display = !p || tr.dataset.prov === p ? '' : 'none';
+    });
+}
+
+// 直接渲染表格数据（数据已由后端 map_data 提供）
+(function(){
+    var tb = document.getElementById('tableBody');
+    var todayData = mapData; // 来自后端
+    todayData.sort(function(a,b){ return (a.province||'').localeCompare(b.province||'') || (a.name||'').localeCompare(b.name||''); });
+    todayData.forEach(function(d){
+        var tr = document.createElement('tr');
+        tr.dataset.prov = d.province;
+        tr.innerHTML = '<td><strong>'+d.name+'</strong></td><td><small>'+d.province+'</small></td>'+
+            '<td><span class="text-danger fw-bold">'+d.value+'℃</span></td>'+
+            '<td><span class="text-primary">'+d.temp_low+'℃</span></td>'+
+            '<td>'+d.weather+'</td>'+
+            '<td><small>'+(d.precipitation != null ? d.precipitation.toFixed(1)+'mm' : '-')+'</small></td>'+
+            '<td><span class="badge '+(d.aqi!=null?(d.aqi<=50?'bg-success':d.aqi<=100?'bg-info':'bg-warning'):'bg-secondary')+'">'+(d.aqi!=null?d.aqi:'N/A')+'</span></td>';
+        tb.appendChild(tr);
+    });
+})();
+
+// 武汉+黄石 全部区+街镇 天气批量加载
+var allIds = {{ all_district_ids|safe }};
+if (allIds.length > 0) {
+    fetch('/api/batch/?ids=' + allIds.join(','))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            // 填充武汉区级温度
+            {% for item in wuhan_structure %}
+            (function(){
+                var w = data['{{ item.district.id }}'];
+                var el = document.getElementById('wh-dist-{{ item.district.id }}');
+                if (el && w) {
+                    var precip = w.precipitation != null ? ' 💧'+w.precipitation.toFixed(1)+'mm' : '';
+                    el.textContent = w.temperature_high + '℃/' + w.temperature_low + '℃ ' + w.weather_condition + precip;
+                }
+            })();
+            {% endfor %}
+            // 填充黄石区级温度
+            {% for item in huangshi_structure %}
+            (function(){
+                var w = data['{{ item.district.id }}'];
+                var el = document.getElementById('hs-dist-{{ item.district.id }}');
+                if (el && w) {
+                    var precip = w.precipitation != null ? ' 💧'+w.precipitation.toFixed(1)+'mm' : '';
+                    el.textContent = w.temperature_high + '℃/' + w.temperature_low + '℃ ' + w.weather_condition + precip;
+                }
+            })();
+            {% endfor %}
+            // 填充所有街镇温度
+            Object.keys(data).forEach(function(id) {
+                var w = data[id];
+                var el = document.getElementById('wtown-' + id) || document.getElementById('hstown-' + id);
+                if (el && w) {
+                    var precip = w.precipitation != null ? ' 💧'+w.precipitation.toFixed(1)+'mm' : '';
+                    el.textContent = w.temperature_high + '℃/' + w.temperature_low + '℃ ' + w.weather_condition + precip;
+                }
+            });
+        });
+}
+</script>
+{% endblock %}

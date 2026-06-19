@@ -1,0 +1,122 @@
+{% extends 'base.html' %}
+{% block title %}年度气温走势 - 天气预测系统{% endblock %}
+{% block content %}
+<div class="container-fluid px-4 py-4">
+    <h3 class="mb-3"><i class="bi bi-calendar-month"></i> 年度气温走势 <span class="text-muted fs-5">{{ year }}年</span></h3>
+
+    <div class="row g-2 align-items-end mb-4">
+        <div class="col-auto">
+            <label class="form-label small mb-1">年份</label>
+            <div>
+                <a href="?year=2025{% if sel_city %}&city_id={{ sel_city }}{% endif %}" class="btn btn-outline-primary btn-sm {% if year == 2025 %}active{% endif %}">2025</a>
+                <a href="?year=2026{% if sel_city %}&city_id={{ sel_city }}{% endif %}" class="btn btn-outline-primary btn-sm {% if year == 2026 %}active{% endif %}">2026</a>
+            </div>
+        </div>
+        <div class="col-auto">
+            <label class="form-label small mb-1">省份</label>
+            <select class="form-select form-select-sm" onchange="changeProv(this.value)" style="width:120px">
+                <option value="">全国</option>
+                {% for prov in city_tree.keys %}
+                <option value="{{ prov }}" {% if sel_prov == prov %}selected{% endif %}>{{ prov }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label small mb-1">城市</label>
+            <select class="form-select form-select-sm" onchange="changeCity(this.value)" style="width:180px">
+                <option value="">全部汇总</option>
+                {% for prov, options in city_tree.items %}
+                <optgroup label="{{ prov }}">
+                {% for opt_id, opt_label, opt_level in options %}
+                    <option value="{{ opt_id }}" {% if sel_city == opt_id %}selected{% endif %}>{{ opt_label }}</option>
+                {% endfor %}
+                </optgroup>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-auto"><span class="text-muted small" id="totalInfo"></span></div>
+    </div>
+
+    <div class="row g-4" id="chartsRow"></div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var year = {{ year }};
+var selCity = '{{ sel_city|default:'' }}';
+var monthNames = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+
+function changeProv(p) {
+    var params = '?year='+year;
+    if(p) params += '&prov=' + encodeURIComponent(p);
+    // 切换省份时重置城市选择
+    location.href = params;
+}
+function changeCity(cid) {
+    var params = '?year='+year;
+    var prov = '{{ sel_prov|default:'' }}';
+    if(prov) params += '&prov=' + encodeURIComponent(prov);
+    if(cid) params += '&city_id='+cid;
+    location.href = params;
+}
+
+// 构建API URL
+var apiUrl = '/api/yearly/?year='+year;
+if(selCity) apiUrl += '&city_id='+selCity;
+
+fetch(apiUrl).then(function(r){return r.json();}).then(function(d){
+    var monthly = d.monthly;
+    var totalDays = 0, dataMonths = 0;
+    for(var m=1;m<=12;m++) {
+        var md = monthly[String(m)];
+        if(md && md.dates.length>0) { totalDays+=md.dates.length; dataMonths++; }
+    }
+    document.getElementById('totalInfo').textContent = totalDays+'天 · '+dataMonths+'个月有数据';
+
+    var row = document.getElementById('chartsRow');
+    for(var m=1; m<=12; m++) {
+        var md = monthly[String(m)];
+        var empty = !md || md.dates.length===0;
+        var label = empty ? (year==2026 && m>6 ? '(未到)' : '(无数据)') : md.dates.length+'天 · 均高'+(md.highs.reduce(function(a,b){return a+b;},0)/md.highs.length).toFixed(0)+'℃';
+
+        var col = document.createElement('div');
+        col.className = 'col-lg-6 col-12';
+        if(empty) {
+            col.innerHTML = '<div class="chart-container"><div class="chart-title">'+monthNames[m-1]+' <small class="text-muted">'+label+'</small></div>'+
+                '<div style="height:250px;display:flex;align-items:center;justify-content:center;color:#bbb;font-size:1.2rem">'+(year==2026&&m>6?'数据未到':'暂无数据')+'</div></div>';
+        } else {
+            col.innerHTML = '<div class="chart-container"><div class="chart-title">'+monthNames[m-1]+' <small class="text-muted">'+label+'</small></div>'+
+                '<div class="chart-box" id="chart'+m+'" style="height:280px"></div></div>';
+        }
+        row.appendChild(col);
+
+        if(!empty) {
+            // 找到每天数据中的最高和最低点用于标注
+            var maxH = md.highs[0], maxHi = 0, minL = md.lows[0], minLi = 0;
+            for(var i=0;i<md.highs.length;i++){
+                if(md.highs[i]>maxH){maxH=md.highs[i];maxHi=i;}
+                if(md.lows[i]<minL){minL=md.lows[i];minLi=i;}
+            }
+
+            var chart = echarts.init(document.getElementById('chart'+m));
+            chart.setOption({
+                tooltip:{trigger:'axis'},
+                legend:{data:['最高温','最低温'],top:0},
+                xAxis:{type:'category',data:md.dates,axisLabel:{fontSize:10,rotate:45,interval:Math.max(1,Math.floor(md.dates.length/12))}},
+                yAxis:{type:'value',name:'℃'},
+                series:[
+                    {name:'最高温',type:'line',data:md.highs,smooth:true,symbol:'circle',symbolSize:3,
+                     itemStyle:{color:'#ee6666'},areaStyle:{color:'rgba(238,102,102,0.08)'},
+                     markPoint:{data:[{type:'max',name:'最高'},{type:'min',name:'最低'}],symbolSize:40}},
+                    {name:'最低温',type:'line',data:md.lows,smooth:true,symbol:'circle',symbolSize:3,
+                     itemStyle:{color:'#5470c6'},areaStyle:{color:'rgba(84,112,198,0.08)'},
+                     markPoint:{data:[{type:'max',name:'最高'},{type:'min',name:'最低'}],symbolSize:40}}
+                ],
+                grid:{left:50,right:25,top:35,bottom:50,containLabel:true}
+            });
+        }
+    }
+});
+</script>
+{% endblock %}

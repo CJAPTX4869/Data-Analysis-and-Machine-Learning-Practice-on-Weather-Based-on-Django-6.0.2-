@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% block title %}个人信息 - 天气预测系统{% endblock %}
+{% block content %}
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-person-gear"></i> 个人信息修改</div>
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">用户名</label>
+                            <input type="text" class="form-control" value="{{ user.username }}" disabled>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">邮箱</label>
+                            <input type="email" name="email" class="form-control" value="{{ user_email }}">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">{{ form.nickname.label }}</label>
+                            {{ form.nickname }}
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">{{ form.phone.label }}</label>
+                            {{ form.phone }}
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">{{ form.bio.label }}</label>
+                        {{ form.bio }}
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">{{ form.avatar.label }}</label>
+                        {{ form.avatar }}
+                        {% if profile.avatar %}
+                            <div class="mt-2">
+                                <img src="{{ profile.avatar.url }}" alt="头像" class="rounded-circle" width="80">
+                            </div>
+                        {% endif %}
+                    </div>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> 保存修改</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

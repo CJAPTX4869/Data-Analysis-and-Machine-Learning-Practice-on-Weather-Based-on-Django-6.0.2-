@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block title %}注册 - 天气预测系统{% endblock %}
+{% block content %}
+<div class="auth-container">
+    <div class="auth-card">
+        <div class="auth-title"><i class="bi bi-person-plus-fill text-primary"></i></div>
+        <div class="auth-title">用户注册</div>
+        <div class="auth-subtitle">创建您的账号</div>
+        <form method="post" novalidate>
+            {% csrf_token %}
+            {% for field in form %}
+                <div class="mb-3">
+                    <label class="form-label">{{ field.label }}</label>
+                    {{ field }}
+                    {% if field.errors %}
+                        <div class="text-danger small mt-1">{{ field.errors.0 }}</div>
+                    {% endif %}
+                </div>
+            {% endfor %}
+            <button type="submit" class="btn btn-primary w-100 btn-lg">注 册</button>
+        </form>
+        <div class="text-center mt-3">
+            <span class="text-muted">已有账号？</span>
+            <a href="{% url 'login' %}">立即登录</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

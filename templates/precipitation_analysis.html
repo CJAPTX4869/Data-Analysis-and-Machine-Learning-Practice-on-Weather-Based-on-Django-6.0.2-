@@ -1,0 +1,240 @@
+{% extends 'base.html' %}
+{% block title %}降水分析 - 天气预测系统{% endblock %}
+{% block content %}
+<div class="container-fluid px-4 py-4">
+    <h3 class="mb-4"><i class="bi bi-cloud-rain"></i> 降水分析 <small class="text-muted fs-6">雨·雪·雷阵雨·雨夹雪</small></h3>
+
+    <!-- 筛选栏 -->
+    <div class="row g-2 align-items-end mb-4">
+        <div class="col-auto">
+            <label class="form-label small mb-1">年份</label>
+            <div>
+                <a href="?year=2025{% if sel_city %}&city_id={{ sel_city }}{% endif %}{% if sel_prov %}&prov={{ sel_prov }}{% endif %}" class="btn btn-outline-primary btn-sm {% if year == 2025 %}active{% endif %}">2025</a>
+                <a href="?year=2026{% if sel_city %}&city_id={{ sel_city }}{% endif %}{% if sel_prov %}&prov={{ sel_prov }}{% endif %}" class="btn btn-outline-primary btn-sm {% if year == 2026 %}active{% endif %}">2026</a>
+            </div>
+        </div>
+        <div class="col-auto">
+            <label class="form-label small mb-1">省份</label>
+            <select class="form-select form-select-sm" onchange="location.href='?year={{ year }}{% if sel_city %}&city_id={{ sel_city }}{% endif %}&prov='+encodeURIComponent(this.value)" style="width:140px">
+                <option value="">全部省份</option>
+                {% for prov in provinces %}
+                <option value="{{ prov }}" {% if sel_prov == prov %}selected{% endif %}>{{ prov }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label small mb-1">城市</label>
+            <select class="form-select form-select-sm" onchange="location.href='?year={{ year }}{% if sel_prov %}&prov={{ sel_prov }}{% endif %}&city_id='+this.value" style="width:180px">
+                <option value="">全部城市</option>
+                {% for prov, options in city_tree.items %}
+                <optgroup label="{{ prov }}">
+                {% for opt_id, opt_label, opt_level in options %}
+                    <option value="{{ opt_id }}" {% if sel_city == opt_id %}selected{% endif %}>{{ opt_label }}</option>
+                {% endfor %}
+                </optgroup>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-auto"><span class="text-muted small" id="infoTip">加载中...</span></div>
+    </div>
+
+    <!-- 统计卡片 -->
+    <div class="row g-3 mb-4" id="statCards">
+        <div class="col-xl-3 col-md-6"><div class="stat-card bg-gradient-primary"><div class="stat-value" id="precipDays">-</div><div class="stat-label">降水天数</div></div></div>
+        <div class="col-xl-3 col-md-6"><div class="stat-card bg-gradient-info"><div class="stat-value" id="precipTotal">-</div><div class="stat-label">总降水量 (mm)</div></div></div>
+        <div class="col-xl-3 col-md-6"><div class="stat-card bg-gradient-warning"><div class="stat-value" id="precipMax">-</div><div class="stat-label">日最大降水 (mm)</div></div></div>
+        <div class="col-xl-3 col-md-6"><div class="stat-card bg-gradient-success"><div class="stat-value" id="precipCities">-</div><div class="stat-label">涉及城市</div></div></div>
+    </div>
+
+    <!-- 图表 -->
+    <div class="row g-4 mb-4">
+        <div class="col-lg-7">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-bar-chart-fill"></i> 降水类型天数分布</div>
+                <div class="chart-box" id="typeBarChart"></div>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="chart-container">
+                <div class="chart-title"><i class="bi bi-pie-chart-fill"></i> 降水类型占比</div>
+                <div class="chart-box" id="typePieChart"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 数据表格 -->
+    <div class="row g-4">
+        <div class="col-12">
+            <div class="table-card">
+                <div class="chart-title mb-2"><i class="bi bi-table"></i> 降水类型明细</div>
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr><th>降水类型</th><th>天数</th><th>总降水量 (mm)</th><th>日均降水量 (mm)</th><th>占比</th></tr>
+                    </thead>
+                    <tbody id="typeTable"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- 每日降水记录 -->
+    <div class="row g-4 mt-2">
+        <div class="col-12">
+            <div class="table-card">
+                <div class="chart-title mb-2"><i class="bi bi-calendar-week"></i> 每日降水记录 <small class="text-muted">（最近60天，0mm=该天气无降水）</small></div>
+                <div style="max-height:500px;overflow-y:auto;">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light sticky-top">
+                        <tr><th>日期</th><th>天气</th><th>降水量</th><th>覆盖城市</th></tr>
+                    </thead>
+                    <tbody id="dailyTable"></tbody>
+                </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var selCity = '{{ sel_city|default:'' }}';
+var selProv = '{{ sel_prov|default:'' }}';
+var year = {{ year }};
+
+// 降水类型图标映射
+var typeIcons = {
+    '小雨': '🌧', '中雨': '🌧', '大雨': '🌧', '暴雨': '🌧',
+    '阵雨': '🌦', '雷阵雨': '⛈',
+    '小雪': '🌨', '中雪': '🌨', '大雪': '🌨',
+    '阵雪': '🌨',
+    '冻雨': '❄🌧', '冰雹': '🧊', '霰': '🌨',
+    '雨夹雪': '🌧❄'
+};
+// 降水类型颜色
+var typeColors = {
+    '小雨': '#91cc75', '中雨': '#5470c6', '大雨': '#ee6666', '暴雨': '#9a60b4',
+    '阵雨': '#48c9b0', '雷阵雨': '#f39c12',
+    '小雪': '#aed6f1', '中雪': '#85c1e9', '大雪': '#5dade2',
+    '阵雪': '#7fb3d8',
+    '冻雨': '#e74c3c', '冰雹': '#8e44ad', '霰': '#bdc3c7',
+    '雨夹雪': '#73c0de'
+};
+
+function loadData() {
+    var apiUrl = '/api/precipitation/?year=' + year;
+    if (selCity) apiUrl += '&city_id=' + selCity;
+    if (selProv) apiUrl += '&prov=' + encodeURIComponent(selProv);
+
+    fetch(apiUrl)
+        .then(function(r) { return r.json(); })
+        .then(function(resp) {
+            renderOverview(resp.overview);
+            renderCharts(resp.type_stats);
+            renderTable(resp.type_stats, resp.overview);
+            if (resp.daily) renderDailyTable(resp.daily);
+            document.getElementById('infoTip').textContent =
+                '共 ' + resp.overview.total_days + ' 条记录，降水 ' + resp.overview.precip_days + ' 天';
+        })
+        .catch(function(e) {
+            document.getElementById('infoTip').textContent = '加载失败: ' + e;
+        });
+}
+
+function renderOverview(ov) {
+    document.getElementById('precipDays').textContent = ov.precip_days + ' 天';
+    document.getElementById('precipTotal').textContent = ov.precip_total + ' mm';
+    document.getElementById('precipMax').textContent = ov.precip_max + ' mm';
+    document.getElementById('precipCities').textContent = ov.precip_cities + ' 个';
+}
+
+function renderCharts(stats) {
+    var types = stats.map(function(d) { return typeIcons[d.type] + ' ' + d.type; });
+    var days = stats.map(function(d) { return d.days; });
+    var colors = stats.map(function(d) { return typeColors[d.type] || '#999'; });
+    var totalDays = days.reduce(function(a, b) { return a + b; }, 0);
+
+    // 柱状图
+    var barChart = echarts.init(document.getElementById('typeBarChart'));
+    barChart.setOption({
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' },
+            formatter: function(ps) {
+                var d = stats[ps[0].dataIndex];
+                return '<b>' + d.type + '</b><br/>天数: ' + d.days + '<br/>总降水: ' + d.total_precip + ' mm<br/>日均: ' + d.avg_precip + ' mm';
+            }
+        },
+        grid: { left: '5%', right: '5%', bottom: '15%', top: '8%', containLabel: true },
+        xAxis: { type: 'category', data: types, axisLabel: { rotate: 30, fontSize: 11 } },
+        yAxis: { type: 'value', name: '天数' },
+        series: [{
+            type: 'bar', data: days.map(function(v, i) {
+                return { value: v, itemStyle: { color: colors[i], borderRadius: [6, 6, 0, 0] } };
+            }),
+            label: { show: true, position: 'top', fontSize: 10 }
+        }]
+    });
+    window.addEventListener('resize', function() { barChart.resize(); });
+
+    // 饼图
+    var pieChart = echarts.init(document.getElementById('typePieChart'));
+    pieChart.setOption({
+        tooltip: { trigger: 'item', formatter: '{b}: {c}天 ({d}%)' },
+        series: [{
+            type: 'pie', radius: ['45%', '75%'],
+            data: stats.map(function(d) {
+                return { name: d.type, value: d.days, itemStyle: { color: typeColors[d.type] || '#999' } };
+            }),
+            label: { formatter: '{b}\n{d}%', fontSize: 11 },
+            emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.3)' } }
+        }]
+    });
+    window.addEventListener('resize', function() { pieChart.resize(); });
+}
+
+function renderTable(stats, ov) {
+    var totalDays = stats.reduce(function(a, b) { return a + b.days; }, 0);
+    var rows = stats.map(function(d) {
+        var pct = totalDays > 0 ? (d.days / totalDays * 100).toFixed(1) : '0';
+        return '<tr>' +
+            '<td>' + (typeIcons[d.type] || '') + ' <strong>' + d.type + '</strong></td>' +
+            '<td>' + d.days + ' 天</td>' +
+            '<td>' + d.total_precip + ' mm</td>' +
+            '<td>' + d.avg_precip + ' mm</td>' +
+            '<td><div class="progress" style="height:18px"><div class="progress-bar" style="width:' + pct + '%;background:' + (typeColors[d.type] || '#999') + '">' + pct + '%</div></div></td>' +
+            '</tr>';
+    }).join('');
+
+    // 非降水行
+    if (ov.non_precip_days > 0) {
+        var nonPct = ov.total_days > 0 ? (ov.non_precip_days / ov.total_days * 100).toFixed(1) : '0';
+        rows += '<tr class="text-muted"><td>☀ 非降水天气</td><td>' + ov.non_precip_days + ' 天</td>' +
+            '<td>-</td><td>-</td>' +
+            '<td><div class="progress" style="height:18px"><div class="progress-bar bg-secondary" style="width:' + nonPct + '%">' + nonPct + '%</div></div></td>' +
+            '</tr>';
+    }
+
+    document.getElementById('typeTable').innerHTML = rows;
+}
+
+function renderDailyTable(daily) {
+    var iconMap = {'小雨':'🌧','中雨':'🌧','大雨':'🌧','暴雨':'🌧','阵雨':'🌦','雷阵雨':'⛈',
+        '小雪':'🌨','中雪':'🌨','大雪':'🌨','阵雪':'🌨','冻雨':'❄','冰雹':'🧊','霰':'🌨','雨夹雪':'🌧❄',
+        '晴':'☀','多云':'⛅','阴':'☁','晴转多云':'🌤','多云转阴':'🌥','雾':'🌫','霾':'🌫','沙尘':'💨'};
+    var rows = daily.map(function(d){
+        var icon = iconMap[d.weather] || '';
+        var precipDisplay = d.precip > 0 ? '<b style="color:#4a90d9">'+d.precip+'mm</b>' : '<span class="text-muted">'+d.weather+' 0mm</span>';
+        var bgColor = d.precip > 10 ? '#e8f4fd' : d.precip > 0 ? '#f8fdf8' : 'transparent';
+        return '<tr style="background:'+bgColor+'"><td><small>'+d.date+'</small></td>'+
+            '<td>'+icon+' '+d.weather+'</td>'+
+            '<td>'+precipDisplay+'</td>'+
+            '<td><small class="text-muted">'+d.cities+' 城</small></td></tr>';
+    }).join('');
+    document.getElementById('dailyTable').innerHTML = rows;
+}
+
+// 页面加载
+loadData();
+</script>
+{% endblock %}
