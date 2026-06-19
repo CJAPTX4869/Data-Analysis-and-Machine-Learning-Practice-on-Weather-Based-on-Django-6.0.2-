@@ -15,7 +15,7 @@
 ## 快速开始
 
 ### 1. 环境要求
-- Python 3.10+
+- Python 3.12+
 - MySQL 8.0+
 - Windows / Linux / macOS
 
